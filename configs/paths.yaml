@@ -1,0 +1,19 @@
+# Paths Configuration for SAR (SMAP Attributable Rescaling)
+# RÈGLE : Sources externes en LECTURE SEULE. Aucun symlink.
+
+sources:
+  smap_raw_dir: "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/data/observations/SMAP_SPL3SMP_E/raw"
+  lis_input_file: "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/data/lis_input/lis_input_NorthMor_5km.nc"
+  mswep_file: "/srv/lustre01/project/climat-um6p-st-iwri-7ksifkvwkuy/shared/TEAM/data/mswep/all_Mor/mswep_1979_2020.nc"
+  soilparm_table: "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/data/land_params/noahmp401_parms/SOILPARM.TBL"
+  daobs_dir: "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/experiments/NorthMor/matrix_2016_2020/DA_nocdf_noirr_2016_2020/output"
+  smap_xai_audit_dir: "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/smap-xai-audit"
+
+local:
+  data_raw_copied: "data/raw_copied"
+  data_interim: "data/interim"
+  data_processed: "data/processed"
+  modeling_tables: "data/processed/modeling_table"
+  figures: "figures"
+  reports: "reports"
+  manifest: "docs/provenance_manifest.csv"

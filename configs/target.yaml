@@ -1,0 +1,55 @@
+# Target Configuration for SAR
+# Cible principale : d = SMAP brut - SSM OL (couche 1, 0-10 cm), signée, AM et PM séparés
+
+target:
+  name: "d"
+  description: "Signed difference between raw SMAP observation and Noah-MP Open Loop surface soil moisture"
+  formula: "d = smap_sm - ssm_ol_daily"
+  units: "m3/m3"
+
+components:
+  smap_observation:
+    source: "SMAP_SPL3SMP_E Version 006 (CRID R19240)"
+    variable: "soil_moisture"
+    reprojection: "nearest_neighbor (identique LIS neighbor_interp)"
+    passes:
+      - name: "AM"
+        local_time_nominal: "06:00"
+        orbit_type: "descending"
+        group: "Soil_Moisture_Retrieval_Data_AM"
+      - name: "PM"
+        local_time_nominal: "18:00"
+        orbit_type: "ascending"
+        group: "Soil_Moisture_Retrieval_Data_PM"
+    valid_range: [0.0, 1.0]
+    qc_inclusion_criterion:
+      flag_variable: "retrieval_qual_flag"
+      rule: "bit 0 == 0"  # Recommanded quality
+      description: "Only recommended quality SMAP retrievals are used for the target"
+
+  open_loop_reference:
+    source: "Noah-MP 4.0.1 Open Loop (OPL_noirr_2016_2020)"
+    variable: "SoilMoist_tavg"
+    layer: 1
+    depth_range_cm: "0-10"
+    aggregation: "daily_mean (24h average)"
+    valid_range: [0.0, 1.0]
+    hourly_pass_status: "postponed (recorded as open issue in docs/decisions.md)"
+
+domain:
+  name: "NorthMor"
+  rows_lat: 121
+  cols_lon: 181
+  resolution_deg: 0.05
+  lat_bounds: [30.0, 36.0]
+  lon_bounds: [-10.0, -1.0]
+  sw_corner: [30.0, -10.0]
+  ne_corner: [36.0, -1.0]
+  land_pixels_count: 16030
+
+period:
+  start_date: "2016-01-01"
+  end_date: "2020-12-31"
+  total_days: 1827
+  smap_available_days: 1792
+  smap_missing_days: 35

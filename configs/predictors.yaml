@@ -1,0 +1,165 @@
+# Predictors Configuration for SAR
+# Structure en 3 groupes : "removable", "retained", "context"
+
+groups:
+  removable:
+    description: "Features representing systematic retrieval artifacts or physiographic biases that should be REMOVED from raw SMAP"
+    features:
+      - name: "elevation"
+        units: "m"
+        source: "smap-xai-audit (SRTM 30m aggregated by LDT)"
+        path: "data/processed/static/elevation/elevation.nc"
+        description: "Surface elevation"
+
+      - name: "slope_deg"
+        units: "degrees"
+        source: "computed from elevation using horizontal spatial gradient"
+        description: "Continuous topographic slope"
+
+      - name: "slopetype"
+        units: "category (1-9)"
+        source: "NoahMP_Morocco/data/lis_input/lis_input_NorthMor_5km.nc (SLOPETYPE)"
+        description: "LIS discrete slope category"
+
+      - name: "soil_texture_fractions"
+        units: "fraction [0, 1]"
+        source: "smap-xai-audit (STATSGO, 16 classes)"
+        path: "data/processed/static/soil_texture/soil_texture_fraction.nc"
+        classes_count: 16
+        description: "Fractions for STATSGO classes 1 to 16"
+
+      - name: "land_cover_fractions"
+        units: "fraction [0, 1]"
+        source: "smap-xai-audit (MODIS-IGBP, 20 classes)"
+        path: "data/processed/static/land_cover/land_cover_fraction.nc"
+        classes_count: 20
+        description: "Fractions for MODIS land cover classes 1 to 20 (class 17 is water)"
+
+      - name: "vegetation_opacity"
+        units: "dimensionless"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "L-band vegetation optical depth (VOD)"
+
+      - name: "vegetation_water_content"
+        units: "kg/m2"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "Vegetation water content (VWC)"
+
+      - name: "roughness_coefficient"
+        units: "dimensionless"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "Surface roughness parameter h"
+
+      - name: "static_water_body_fraction"
+        units: "fraction [0, 1]"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "Fraction of cell covered by static water bodies"
+
+      - name: "surface_temperature"
+        units: "K"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "Effective surface temperature"
+
+      - name: "surface_flag"
+        units: "bitmask"
+        source: "Raw SMAP HDF5 SPL3SMP_E (AM/PM)"
+        description: "SMAP surface condition bitmask"
+
+      - name: "pass"
+        units: "categorical ('AM', 'PM')"
+        description: "Satellite orbital pass (AM ~06:00 local, PM ~18:00 local)"
+
+  retained:
+    description: "Features carrying genuine unmodeled geophysical signals (e.g. irrigation) or atmospheric forcing errors to RETAIN in the rescaled observation"
+    features:
+      - name: "irrigfrac_gmia"
+        units: "fraction [0, 1]"
+        source: "NoahMP_Morocco/data/lis_input/lis_input_NorthMor_5km.nc (IRRIGFRAC)"
+        description: "Global Map of Irrigation Areas (GMIA) fraction - RETAINED to avoid wiping out irrigation signals"
+
+      - name: "delta_precip_imerg_mswep"
+        units: "mm/d"
+        formula: "precipitation_imerg - precipitation_mswep"
+        description: "Precipitation discrepancy between IMERG and MSWEP"
+
+      - name: "precip_mswep"
+        units: "mm/d"
+        source: "MSWEP v2.8 (0.10 deg daily, all_Mor/mswep_1979_2020.nc)"
+        description: "Daily precipitation from gauge-radar-satellite MSWEP v2.8"
+
+      - name: "precip_1d_sum"
+        units: "mm"
+        description: "Antecedent precipitation sum over previous 1 day (strictly t-1 to avoid leakage)"
+
+      - name: "precip_3d_sum"
+        units: "mm"
+        description: "Antecedent precipitation rolling sum over previous 3 days (strictly ending at t-1)"
+
+      - name: "precip_7d_sum"
+        units: "mm"
+        description: "Antecedent precipitation rolling sum over previous 7 days (strictly ending at t-1)"
+
+      - name: "days_since_rain_gt_1mm"
+        units: "days"
+        description: "Count of consecutive antecedent days since last precipitation > 1.0 mm"
+
+  context:
+    description: "Temporal and antecedent model context whose retention status will be decided via sensitivity analysis"
+    features:
+      - name: "doy_sin"
+        formula: "sin(2 * pi * doy / 365.25)"
+        description: "Sine of annual seasonal cycle"
+
+      - name: "doy_cos"
+        formula: "cos(2 * pi * doy / 365.25)"
+        description: "Cosine of annual seasonal cycle"
+
+      - name: "ssm_lag1"
+        units: "m3/m3"
+        source: "OPL SoilMoist_tavg layer 1 daily average at t-1"
+        description: "Antecedent OL surface soil moisture at t-1 (strictly no t OL)"
+
+      - name: "sm_layer2_lag1"
+        units: "m3/m3"
+        source: "OPL SoilMoist_tavg layer 2 daily average at t-1"
+        description: "Antecedent OL layer 2 soil moisture at t-1"
+
+      - name: "sm_layer3_lag1"
+        units: "m3/m3"
+        source: "OPL SoilMoist_tavg layer 3 daily average at t-1"
+        description: "Antecedent OL layer 3 soil moisture at t-1"
+
+      - name: "sm_layer4_lag1"
+        units: "m3/m3"
+        source: "OPL SoilMoist_tavg layer 4 daily average at t-1"
+        description: "Antecedent OL layer 4 soil moisture at t-1"
+
+      - name: "rzsm_lag1"
+        units: "m3/m3"
+        source: "OPL root zone soil moisture at t-1"
+        description: "Antecedent OL root-zone soil moisture at t-1"
+
+      - name: "et_lag1"
+        units: "kg/m2/s"
+        source: "OPL Evap_tavg total evapotranspiration at t-1"
+        description: "Antecedent OL evapotranspiration at t-1"
+
+      - name: "surface_runoff_lag1"
+        units: "kg/m2/s"
+        source: "OPL Qs_tavg surface runoff at t-1"
+        description: "Antecedent OL surface runoff at t-1"
+
+      - name: "baseflow_lag1"
+        units: "kg/m2/s"
+        source: "OPL Qsb_tavg baseflow at t-1"
+        description: "Antecedent OL baseflow at t-1"
+
+      - name: "lai_lag1"
+        units: "m2/m2"
+        source: "OPL LAI_tavg leaf area index at t-1"
+        description: "Antecedent OL leaf area index at t-1"
+
+      - name: "ssm_rel_wilt_ref_lag1"
+        units: "index [0, 1.5]"
+        formula: "(ssm_lag1 - smcwlt) / (smcref - smcwlt)"
+        description: "Antecedent relative SSM between wilting and field capacity at t-1"

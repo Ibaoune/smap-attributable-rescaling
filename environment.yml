@@ -1,0 +1,25 @@
+# Environment specification for smap-attributable-rescaling (SAR)
+# Note : Repris de smap-xai-audit et complété pour la chaîne SAR.
+# Statut : à vérifier sur l'environnement conda du HPC.
+
+name: smap-attributable-rescaling
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - netcdf4
+  - netcdf-c
+  - xarray
+  - numpy
+  - pandas
+  - matplotlib
+  - pyarrow          # Gestion des tables de modélisation Parquet
+  - pyyaml           # Parsing des fichiers de configuration
+  - scipy            # Calculs de pente, gradients et statistiques
+  - scikit-learn     # Baseline, modèles de régression et métriques
+  - pip:
+    - h5py           # À vérifier : accès direct aux groupes HDF5 SMAP bruts
