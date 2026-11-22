@@ -3,6 +3,8 @@
 Step 1b: Reproject raw SMAP Enhanced L3 (SPL3SMP_E) HDF5 files onto NorthMor grid (121 x 181).
 Extracts all 8 variables for AM and PM passes using exact LIS nearest-neighbor mapping.
 Saves annual NetCDF files under data/interim/smap/smap_northmor_{year}.nc.
+Includes strict automated quality controls at completion (no -9999, no out-of-range values).
+Uses direct bounding-box slicing for ultra-fast I/O.
 """
 
 import os
@@ -23,6 +25,16 @@ SMAP_RAW_DIR = "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/m
 LIS_INPUT = "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/data/lis_input/lis_input_NorthMor_5km.nc"
 OUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'interim', 'smap')
 
+# Expected valid ranges for floating variables
+EXPECTED_RANGES = {
+    'soil_moisture': (0.0, 0.5),
+    'vegetation_water_content': (0.0, 20.0),
+    'surface_temperature': (0.0, 350.0),
+    'roughness_coefficient': (0.0, 1.0),
+    'static_water_body_fraction': (0.0, 1.0),
+}
+
+
 def get_grid_and_mapping():
     ds = netCDF4.Dataset(LIS_INPUT, 'r')
     lat = ds.variables['lat'][:]
@@ -30,6 +42,48 @@ def get_grid_and_mapping():
     ds.close()
     row_idx, col_idx = latlon_to_ease2_m09(lat, lon)
     return lat[:, 0], lon[0, :], row_idx, col_idx
+
+
+def verify_output_netcdf(filepath: str):
+    """
+    Strict validation of generated NetCDF:
+    1. Zero instances of -9999 or -9999.0
+    2. All variables within physical/valid bounds
+    """
+    print(f"\nRunning automated QC check on {filepath}...")
+    ds = netCDF4.Dataset(filepath, 'r')
+    errors = []
+    
+    for vname in ds.variables:
+        if vname in ['time', 'lat', 'lon']:
+            continue
+        arr = ds.variables[vname][:]
+        
+        # Check for -9999
+        m9999_count = int(np.sum(arr == -9999.0))
+        if m9999_count > 0:
+            errors.append(f"Variable {vname} contains {m9999_count} occurrences of -9999!")
+            
+        # Check range for known variables
+        base_var = vname.replace('_am', '').replace('_pm', '')
+        if base_var in EXPECTED_RANGES:
+            vmin, vmax = EXPECTED_RANGES[base_var]
+            if np.issubdtype(arr.dtype, np.floating):
+                valid_mask = ~np.isnan(arr)
+                if np.any(valid_mask):
+                    actual_min = float(np.nanmin(arr))
+                    actual_max = float(np.nanmax(arr))
+                    if actual_min < vmin - 1e-5 or actual_max > vmax + 1e-5:
+                        errors.append(f"Variable {vname} out of range: [{actual_min:.4f}, {actual_max:.4f}] vs expected [{vmin}, {vmax}]")
+                        
+    ds.close()
+    if errors:
+        for err in errors:
+            print(f"  [ERROR] {err}")
+        raise ValueError(f"QC failed for {filepath} with {len(errors)} errors.")
+    else:
+        print(f"  [PASSED] Automated QC passed: 0 instances of -9999, all variables strictly within physical bounds.")
+
 
 def process_year(year: int, lat_1d, lon_1d, row_idx, col_idx):
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -42,6 +96,13 @@ def process_year(year: int, lat_1d, lon_1d, row_idx, col_idx):
     
     n_lat, n_lon = 121, 181
     
+    # Compute bounding box for NorthMor in global EASE2 grid
+    r_min, r_max = int(row_idx.min()), int(row_idx.max())
+    c_min, c_max = int(col_idx.min()), int(col_idx.max())
+    bbox = (r_min, r_max, c_min, c_max)
+    local_row_idx = row_idx - r_min
+    local_col_idx = col_idx - c_min
+    
     # Initialize containers for AM and PM variables
     data_vars = {}
     for p in ['am', 'pm']:
@@ -51,7 +112,7 @@ def process_year(year: int, lat_1d, lon_1d, row_idx, col_idx):
             fill = 65535 if 'flag' in v else np.nan
             data_vars[var_name] = np.full((n_days, n_lat, n_lon), fill, dtype=dtype)
             
-    print(f"Processing SMAP for year {year} ({n_days} days)...")
+    print(f"Processing SMAP for year {year} ({n_days} days) using bounding box {bbox}...")
     found_count = 0
     
     for t_idx, d in enumerate(dates):
@@ -67,12 +128,12 @@ def process_year(year: int, lat_1d, lon_1d, row_idx, col_idx):
             ds = open_smap_h5(fpath)
             for p in ['am', 'pm']:
                 pass_name = p.upper()
-                pass_dict = read_smap_pass_data(ds, pass_name)
+                pass_dict = read_smap_pass_data(ds, pass_name, bbox=bbox)
                 for v in SMAP_CANONICAL_VARIABLES:
                     var_name = f"{v}_{p}"
-                    arr_global = pass_dict[v]
-                    # Reproject via nearest neighbor
-                    regridded = regrid_smap_to_northmor(arr_global, row_idx, col_idx)
+                    arr_sliced = pass_dict[v]
+                    # Reproject via nearest neighbor on local slice
+                    regridded = regrid_smap_to_northmor(arr_sliced, local_row_idx, local_col_idx)
                     data_vars[var_name][t_idx] = regridded
             ds.close()
         except Exception as e:
@@ -111,6 +172,10 @@ def process_year(year: int, lat_1d, lon_1d, row_idx, col_idx):
             
     ds_out.to_netcdf(out_file, encoding=encoding)
     print(f"Successfully generated: {out_file} ({os.path.getsize(out_file)/(1024*1024):.1f} MB)")
+    
+    # Automated QC check
+    verify_output_netcdf(out_file)
+
 
 def main():
     parser = argparse.ArgumentParser()

@@ -17,3 +17,6 @@ def compute_signed_target(smap_sm: np.ndarray, ssm_ol_daily: np.ndarray) -> np.n
     invalid = (smap_sm < 0.0) | (smap_sm > 1.0) | (ssm_ol_daily < 0.0) | (ssm_ol_daily > 1.0)
     diff = np.where(invalid, np.nan, diff)
     return diff
+
+# Alias for compatibility
+compute_target_discrepancy = compute_signed_target
