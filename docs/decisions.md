@@ -77,3 +77,15 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
   3. **Précipitations du jour $t$** : La précipitation totale journalière IMERG du jour $t$ n'est pas connue à 06h00 (passage AM). Par conséquent, les cumuls de pluie utilisés comme prédicteurs sont strictement antécédents (`precip_1d_sum`, `precip_3d_sum`, `precip_7d_sum` arrêtés à $t-1$). Si la pluie du jour $t$ devait être utilisée, elle exigerait d'être tronquée à l'heure du passage satellitaire via les forçages demi-horaires IMERG (05h00 UTC pour AM, 17h00 UTC pour PM) ; à défaut, elle est strictement exclue des prédicteurs pour éliminer toute fuite.
   4. **Composantes de la cible dans la table** : `ssm_ol_daily` et `smap_sm` sont stockées dans la table Parquet à des fins de calcul de diagnostics et d'audit, mais sont formellement marquées « non-prédicteur » dans `docs/data_contract.md`.
 - **Statut** : Acté.
+
+---
+
+## Décision 8 : Source autoritaire pour la fraction irriguée (FAO GMIA v5)
+- **Contexte** : Dans le fichier maître de paramètres d'entrée de LIS `NoahMP_Morocco/data/lis_input/lis_input_NorthMor_5km.nc`, la variable `IRRIGFRAC` est strictement nulle sur l'ensemble des 21 901 mailles du domaine NorthMor (`min=0.0`, `max=0.0`, `mean=0.0`), de même que dans `lis_input_NorthMor_5km_irr.nc`. Cette vacuité s'explique par le fait que les simulations historiques Noah-MP ont été exécutées en configuration non irriguée (`noirr`), sans initialisation de la fraction d'irrigation dans `lis_input`.
+- **Décision** : La source faisant autorité pour quantifier la fraction équipée pour l'irrigation est la base de données globale de la FAO : **GMIA v5** (*Global Map of Irrigation Areas*, version 5.0), située dans `NoahMP_Morocco/data/land_params/GMIA/gmia_v5_aei_pct.asc` (matrice binaire optimisée `gmia_v5_aei_pct.bin`).
+- **Méthode** :
+  - Sous-ensemble extrait sur la fenêtre géographique du domaine NorthMor ($[29.8^\circ\text{N}, 36.2^\circ\text{N}] \times [-10.2^\circ\text{E}, -0.8^\circ\text{E}]$).
+  - Interpolation spatiale sur la grille cible 0,05° (`lat`, `lon`) par interpolation bi-linéaire sur grille régulière (`scipy.interpolate.RegularGridInterpolator`, `bounds_error=False`, `fill_value=0.0`).
+  - Conversion d'unité : passage du pourcentage $[0, 100\,\%]$ à une fraction adimensionnelle $[0, 1]$ (`irrigfrac_gmia = gmia_5km / 100.0`).
+- **Validation** : La grille interpolée présente une moyenne de 0,0255 (2,55 %) sur NorthMor, avec un maximum de 0,9550 (95,50 % dans le bassin du Gharb/Sebou).
+- **Statut** : Acté.
