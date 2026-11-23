@@ -224,6 +224,11 @@ def evaluate_diagnostic(pairs_df, sm_thresh, rain_thresh):
         tot = block_grp['count'].values
         
         smap_rate, smap_low, smap_high = compute_stratum_bootstrap_rate(ev_smap, tot, B=500)
+        if n_blocks < 5:
+            smap_low, smap_high = np.nan, np.nan
+            status = 'non interprétable (< 5 blocs)'
+        else:
+            status = 'interprétable'
         
         rows.append({
             'gmia_class': gmia,
@@ -235,7 +240,8 @@ def evaluate_diagnostic(pairs_df, sm_thresh, rain_thresh):
             'smap_wet_events': int(ev_smap.sum()),
             'smap_freq_pct': smap_rate,
             'smap_ci_low': smap_low,
-            'smap_ci_high': smap_high
+            'smap_ci_high': smap_high,
+            'status': status
         })
         
     return pd.DataFrame(rows)
@@ -326,6 +332,16 @@ def compute_did_with_bootstrap(pairs_df, sm_thresh, rain_thresh, B=500):
             
         sub_gt30 = sub[sub['gmia_class'] == '>30%']
         sub_0 = sub[sub['gmia_class'] == '0%']
+        n_b_gt30 = int(sub_gt30['spatial_block_id'].nunique()) if len(sub_gt30) > 0 else 0
+        n_b_0 = int(sub_0['spatial_block_id'].nunique()) if len(sub_0) > 0 else 0
+        
+        if n_b_gt30 < 5 or n_b_0 < 5 or n_b < 5:
+            jja_low, jja_high = np.nan, np.nan
+            djf_low, djf_high = np.nan, np.nan
+            did_low, did_high = np.nan, np.nan
+            status = 'non interprétable (< 5 blocs)'
+        else:
+            status = 'interprétable'
         
         rows.append({
             'texture': tex,
@@ -333,10 +349,10 @@ def compute_did_with_bootstrap(pairs_df, sm_thresh, rain_thresh, B=500):
             'n_pairs_jja_0': int(tot_jja_0.sum()),
             'n_pairs_djf_gt30': int(tot_djf_gt30.sum()),
             'n_pairs_djf_0': int(tot_djf_0.sum()),
-            'n_px_gt30': int(sub_gt30['pixel_id'].nunique()),
-            'n_px_0': int(sub_0['pixel_id'].nunique()),
-            'n_blocks_gt30': int(sub_gt30['spatial_block_id'].nunique()),
-            'n_blocks_0': int(sub_0['spatial_block_id'].nunique()),
+            'n_px_gt30': int(sub_gt30['pixel_id'].nunique()) if len(sub_gt30) > 0 else 0,
+            'n_px_0': int(sub_0['pixel_id'].nunique()) if len(sub_0) > 0 else 0,
+            'n_blocks_gt30': n_b_gt30,
+            'n_blocks_0': n_b_0,
             'n_blocks_total': n_b,
             'rate_jja_gt30': rate_jja_gt30,
             'rate_jja_0': rate_jja_0,
@@ -350,7 +366,8 @@ def compute_did_with_bootstrap(pairs_df, sm_thresh, rain_thresh, B=500):
             'diff_djf_ci_high': djf_high,
             'did': did,
             'did_ci_low': did_low,
-            'did_ci_high': did_high
+            'did_ci_high': did_high,
+            'status': status
         })
         
     return pd.DataFrame(rows)
@@ -447,6 +464,13 @@ def compute_continuous_trend_with_bootstrap(pairs_df, sm_thresh, rain_thresh, B=
             b_low, b_high = np.nan, np.nan
             r_low, r_high = np.nan, np.nan
             
+        if n_b < 5:
+            b_low, b_high = np.nan, np.nan
+            r_low, r_high = np.nan, np.nan
+            status = 'non interprétable (< 5 blocs)'
+        else:
+            status = 'interprétable'
+
         rows.append({
             'stratum_texture': tex,
             'stratum_season': s,
@@ -460,7 +484,8 @@ def compute_continuous_trend_with_bootstrap(pairs_df, sm_thresh, rain_thresh, B=
             'beta_ci_high': b_high,
             'pearson_r': float(r),
             'r_ci_low': r_low,
-            'r_ci_high': r_high
+            'r_ci_high': r_high,
+            'status': status
         })
         
     return pd.DataFrame(rows)
@@ -541,7 +566,7 @@ def plot_f6_figure(df_default, df_did, df_trend, df_sens, pairs_df, thresh_cfg, 
     # Panel B: Difference of Differences across textures
     ax1 = axes[0, 1]
     textures_did = ["Clay Loam", "Loam", "Sandy Clay Loam", "Sandy Loam", "Clay", "All"]
-    sub_did = df_did.set_index('texture').reindex(textures_did).dropna()
+    sub_did = df_did[df_did['status'] == 'interprétable'].set_index('texture')
     x_idx = np.arange(len(sub_did))
     width = 0.28
     
@@ -634,23 +659,35 @@ def generate_markdown_report(df_default, df_did, df_trend, df_sens, pairs_df, th
     # DiD table rows
     did_rows = []
     for _, r_d in df_did.iterrows():
-        did_rows.append(
-            f"| {r_d['texture']} | {r_d['diff_jja']:+.3f}% [{r_d['diff_jja_ci_low']:+.3f}%, {r_d['diff_jja_ci_high']:+.3f}%] | "
-            f"{r_d['diff_djf']:+.3f}% [{r_d['diff_djf_ci_low']:+.3f}%, {r_d['diff_djf_ci_high']:+.3f}%] | "
-            f"**{r_d['did']:+.3f}%** [{r_d['did_ci_low']:+.3f}%, {r_d['did_ci_high']:+.3f}%] | "
-            f"{r_d['n_px_gt30']}/{r_d['n_px_0']} px | {r_d['n_blocks_gt30']}/{r_d['n_blocks_0']} blk |"
-        )
+        if r_d['status'] != 'interprétable' or pd.isna(r_d['did_ci_low']):
+            did_rows.append(
+                f"| {r_d['texture']} | non interprétable | non interprétable | **non interprétable** | "
+                f"{r_d['n_px_gt30']}/{r_d['n_px_0']} px | {r_d['n_blocks_gt30']}/{r_d['n_blocks_0']} blk (< 5) |"
+            )
+        else:
+            did_rows.append(
+                f"| {r_d['texture']} | {r_d['diff_jja']:+.3f}% [{r_d['diff_jja_ci_low']:+.3f}%, {r_d['diff_jja_ci_high']:+.3f}%] | "
+                f"{r_d['diff_djf']:+.3f}% [{r_d['diff_djf_ci_low']:+.3f}%, {r_d['diff_djf_ci_high']:+.3f}%] | "
+                f"**{r_d['did']:+.3f}%** [{r_d['did_ci_low']:+.3f}%, {r_d['did_ci_high']:+.3f}%] | "
+                f"{r_d['n_px_gt30']}/{r_d['n_px_0']} px | {r_d['n_blocks_gt30']}/{r_d['n_blocks_0']} blk |"
+            )
     table_did = chr(10).join(did_rows)
     
     # Continuous trend table rows
     trend_rows = []
     for _, r_t in df_trend.iterrows():
-        trend_rows.append(
-            f"| {r_t['stratum_texture']} | {r_t['stratum_season']} | {r_t['n_pairs']:,} | "
-            f"{r_t['beta_slope']:+.3f}% [{r_t['beta_ci_low']:+.3f}%, {r_t['beta_ci_high']:+.3f}%] | "
-            f"{r_t['pearson_r']:+.4f} [{r_t['r_ci_low']:+.4f}, {r_t['r_ci_high']:+.4f}] | "
-            f"{r_t['n_pixels']:,} px, {r_t['n_blocks']} blk |"
-        )
+        if r_t['status'] != 'interprétable' or pd.isna(r_t['beta_ci_low']):
+            trend_rows.append(
+                f"| {r_t['stratum_texture']} | {r_t['stratum_season']} | {r_t['n_pairs']:,} | "
+                f"non interprétable | non interprétable | {r_t['n_pixels']:,} px, {r_t['n_blocks']} blk (< 5) |"
+            )
+        else:
+            trend_rows.append(
+                f"| {r_t['stratum_texture']} | {r_t['stratum_season']} | {r_t['n_pairs']:,} | "
+                f"{r_t['beta_slope']:+.3f}% [{r_t['beta_ci_low']:+.3f}%, {r_t['beta_ci_high']:+.3f}%] | "
+                f"{r_t['pearson_r']:+.4f} [{r_t['r_ci_low']:+.4f}, {r_t['r_ci_high']:+.4f}] | "
+                f"{r_t['n_pixels']:,} px, {r_t['n_blocks']} blk |"
+            )
     table_trend = chr(10).join(trend_rows)
     
     # Monthly table for Clay Loam (>30% vs 0%)
@@ -665,12 +702,18 @@ def generate_markdown_report(df_default, df_did, df_trend, df_sens, pairs_df, th
         if len(sub_gt30) > 0 and len(sub_0) > 0:
             r_gt30 = sub_gt30.iloc[0]
             r_0 = sub_0.iloc[0]
-            diff = r_gt30['smap_freq_pct'] - r_0['smap_freq_pct']
-            month_rows.append(
-                f"| {m:02d} | {r_gt30['smap_freq_pct']:.3f}% [{r_gt30['smap_ci_low']:.3f}%, {r_gt30['smap_ci_high']:.3f}%] | "
-                f"{r_0['smap_freq_pct']:.3f}% [{r_0['smap_ci_low']:.3f}%, {r_0['smap_ci_high']:.3f}%] | "
-                f"{diff:+.3f}% | {r_gt30['n_pixels']}/{r_0['n_pixels']} | {r_gt30['n_blocks']}/{r_0['n_blocks']} |"
-            )
+            if r_gt30['status'] != 'interprétable' or r_0['status'] != 'interprétable' or pd.isna(r_gt30['smap_ci_low']) or pd.isna(r_0['smap_ci_low']):
+                month_rows.append(
+                    f"| {m:02d} | non interprétable | non interprétable | "
+                    f"non interprétable | {r_gt30['n_pixels']}/{r_0['n_pixels']} | {r_gt30['n_blocks']}/{r_0['n_blocks']} (< 5) |"
+                )
+            else:
+                diff = r_gt30['smap_freq_pct'] - r_0['smap_freq_pct']
+                month_rows.append(
+                    f"| {m:02d} | {r_gt30['smap_freq_pct']:.3f}% [{r_gt30['smap_ci_low']:.3f}%, {r_gt30['smap_ci_high']:.3f}%] | "
+                    f"{r_0['smap_freq_pct']:.3f}% [{r_0['smap_ci_low']:.3f}%, {r_0['smap_ci_high']:.3f}%] | "
+                    f"{diff:+.3f}% | {r_gt30['n_pixels']}/{r_0['n_pixels']} | {r_gt30['n_blocks']}/{r_0['n_blocks']} |"
+                )
     table_months = chr(10).join(month_rows)
     
     # Sensitivity summary table
@@ -683,6 +726,13 @@ def generate_markdown_report(df_default, df_did, df_trend, df_sens, pairs_df, th
         )
     table_sens = chr(10).join(sens_rows)
     
+    latex_tau_sm = r"$\tau_{\mathrm{sm}}$"
+    latex_tau_rain = r"$\tau_{\mathrm{rain}}$"
+    latex_event = r"$\Delta \mathrm{SM} > \tau_{\mathrm{sm}}$"
+    latex_rain = r"$\mathrm{Rain}_{t_1 \to t_2} < \tau_{\mathrm{rain}}$"
+    latex_did_formula = r"$\Delta_{\mathrm{DiD}} = [f(>30\%) - f(0\%)]_{\mathrm{JJA}} - [f(>30\%) - f(0\%)]_{\mathrm{DJF}}$"
+    latex_beta = r"$\beta$"
+    latex_r = r"$r$"
     report_md = f"""# Rapport de Diagnostic Phase 2a-bis : Signal d'Irrigation Dynamique
 
 **Période d'évaluation** : 2016-01-01 au 2019-12-31 (4 années complètes).  
@@ -696,9 +746,9 @@ def generate_markdown_report(df_default, df_did, df_trend, df_sens, pairs_df, th
 
 Un événement d'humidification sans précipitation est défini par :
 - Un intervalle temporel de 1 à 3 jours entre deux observations du même passage au même pixel.
-- Une élévation d'humidité du sol : $\Delta \text{{SM}} > \tau_{{\text{{sm}}}}$.
-- Un cumul de précipitations IMERG sur l'intervalle : $\text{{Rain}}_{{t_1 \to t_2}} < \tau_{{\text{{rain}}}}$.
-- Configuration par défaut : $\tau_{{\text{{sm}}}} = {thresh_cfg['default']['delta_sm_min']:.2f}\text{{ m}}^3/\text{{m}}^3$, $\tau_{{\text{{rain}}}} = {thresh_cfg['default']['rain_imerg_max']:.1f}\text{{ mm}}$.
+- Une élévation d'humidité du sol : {latex_event}.
+- Un cumul de précipitations IMERG sur l'intervalle : {latex_rain}.
+- Configuration par défaut : {latex_tau_sm} = {thresh_cfg["default"]["delta_sm_min"]:.2f} m³/m³, {latex_tau_rain} = {thresh_cfg["default"]["rain_imerg_max"]:.1f} mm.
 
 ---
 
@@ -706,12 +756,13 @@ Un événement d'humidification sans précipitation est défini par :
 
 - **Nombre total de paires de passages successifs** : {n_pairs_tot:,}
 - **Événements détectés sur SMAP (ensemble du domaine et de l'année)** : {ov_default['smap_wet_events']:,} ({ov_default['smap_freq_pct']:.3f}%, IC 95% : [{ov_default['smap_ci_low']:.3f}%, {ov_default['smap_ci_high']:.3f}%])
+- **Règle de fiabilité spatiale** : Conformément au protocole, toute strate présentant moins de 5 blocs spatiaux distincts de 1° est classée comme « non interprétable » (aucun IC n'est rapporté en raison de l'absence de degrés de liberté spatiaux suffisants).
 
 ---
 
 ## 3. Différence de Différences (DiD) : [Fréquence >30 % − 0 %] en Été (JJA) vs Hiver (DJF)
 
-Contraste $\Delta_{{\text{{DiD}}}} = [f(>30\%) - f(0\%)]_{{\text{{JJA}}}} - [f(>30\%) - f(0\%)]_{{\text{{DJF}}}}$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
+Contraste {latex_did_formula} avec intervalles de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
 
 | Texture | Contraste JJA (>30% − 0%) | Contraste DJF (>30% − 0%) | Différence de Différences (DiD) | Pixels (>30% / 0%) | Blocs 1° (>30% / 0%) |
 |:---|:---:|:---:|:---:|:---:|:---:|
@@ -721,9 +772,9 @@ Contraste $\Delta_{{\text{{DiD}}}} = [f(>30\%) - f(0\%)]_{{\text{{JJA}}}} - [f(>
 
 ## 4. Test de Tendance Continue : Fréquence d'Humidification vs Fraction GMIA Continue
 
-Pente de régression linéaire $\beta$ (% de fréquence par 100% de GMIA) et corrélation de Pearson $r$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° :
+Pente de régression linéaire {latex_beta} (% de fréquence par 100% de GMIA) et corrélation de Pearson {latex_r} avec intervalles de confiance à 95% par bootstrap par blocs de 1° :
 
-| Texture | Saison | Paires analysées | Pente linéaire $\beta$ [IC 95%] | Corrélation $r$ [IC 95%] | Échantillon spatial |
+| Texture | Saison | Paires analysées | Pente linéaire {latex_beta} [IC 95%] | Corrélation {latex_r} [IC 95%] | Échantillon spatial |
 |:---|:---:|:---:|:---:|:---:|:---:|
 {table_trend}
 

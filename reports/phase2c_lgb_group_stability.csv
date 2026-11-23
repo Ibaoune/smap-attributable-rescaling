@@ -1,0 +1,5 @@
+group,mean_importance,mean_rank,fold_0_rank,fold_1_rank,fold_2_rank,fold_3_rank,fold_4_rank,mean_intra_spearman_rho
+removable,0.019612660588181806,2.0,2,2,2,2,2,0.9629509713228493
+retained,0.005324848732682912,4.0,4,4,4,4,4,0.9857142857142858
+context_representation,0.03663005496958394,1.0,1,1,1,1,1,0.8799999999999999
+context_process,0.007784664059363072,3.0,3,3,3,3,3,0.8595238095238097

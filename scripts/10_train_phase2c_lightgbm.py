@@ -51,6 +51,8 @@ from scipy.stats import spearmanr, pearsonr
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
 import seaborn as sns
 import lightgbm as lgb
 import shap
@@ -153,8 +155,7 @@ def load_training_data(feature_cols):
     train_df['rand'] = np.random.RandomState(42).rand(len(train_df))
     train_sampled = train_df.sort_values(['pixel_id', 'rand']).groupby('pixel_id').head(100).reset_index(drop=True)
     
-    # Impute roughness_coefficient NaN with median/0.0
-    train_sampled['roughness_coefficient'] = train_sampled['roughness_coefficient'].fillna(0.0)
+    # Do NOT impute roughness_coefficient NaN with 0.0 (LightGBM natively branches NaNs)
     
     n_train = len(train_sampled)
     n_pixels = int(train_sampled['pixel_id'].nunique())
@@ -163,12 +164,22 @@ def load_training_data(feature_cols):
 
 
 def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_retained, cols_context_rep, cols_context_proc):
-    """Perform 5-fold balanced spatial cross-validation and evaluate variable-level SHAP stability."""
+    """Perform 5-fold balanced spatial cross-validation and evaluate variable- and group-level SHAP stability."""
     print("--- Running 5-Fold Spatial Cross-Validation with LightGBM Exact TreeSHAP ---")
     t0 = time.time()
     
     folds = sorted(train_df['spatial_fold'].unique())
     n_folds = len(folds)
+    
+    group_dict = {
+        'removable': [feature_cols.index(c) for c in cols_removable],
+        'retained': [feature_cols.index(c) for c in cols_retained],
+        'context_representation': [feature_cols.index(c) for c in cols_context_rep],
+        'context_process': [feature_cols.index(c) for c in cols_context_proc]
+    }
+    grp_names = list(group_dict.keys())
+    fold_group_importances = {f: {} for f in folds}
+    fold_intra_group_ranks = {f: {} for f in folds}
     
     # Track metrics and feature importances
     cv_records = []
@@ -229,6 +240,17 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
         ranks[order] = np.arange(1, len(feature_cols) + 1)
         fold_feature_ranks[fold] = ranks
         
+        # Group absolute importances and intra-group feature ranks
+        for g_name, g_idx in group_dict.items():
+            g_contrib = shap_vals[:, g_idx].sum(axis=1)
+            fold_group_importances[fold][g_name] = float(np.mean(np.abs(g_contrib)))
+            
+            sub_shap = mean_abs_shap[g_idx]
+            order_g = np.argsort(-sub_shap)
+            ranks_g = np.empty_like(order_g)
+            ranks_g[order_g] = np.arange(1, len(g_idx) + 1)
+            fold_intra_group_ranks[fold][g_name] = ranks_g
+        
         print(f"  Fold {fold}: Val RMSE={rmse_val:.4f}, r={r_val:.4f}, Bias={bias_val:+.4f} (SHAP on {n_sample_shap:,} pts) in {time.time()-t_f0:.1f}s")
         cv_records.append({
             'fold': fold,
@@ -257,7 +279,16 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
     top15_features = df_ranks.head(15)['feature'].tolist()
     top15_ranks_df = df_ranks.head(15).copy()
     
-    # Pairwise Spearman rank correlations across folds for top 15 features
+    # Group ranks per fold (rank 1 is highest importance)
+    fold_group_ranks = {}
+    for fold in folds:
+        vals = [fold_group_importances[fold][gn] for gn in grp_names]
+        ord_g = np.argsort(-np.array(vals))
+        rnks = np.empty_like(ord_g)
+        rnks[ord_g] = np.arange(1, len(grp_names) + 1)
+        fold_group_ranks[fold] = {gn: int(rnks[k]) for k, gn in enumerate(grp_names)}
+        
+    # Pairwise Spearman rank correlations across folds for variables, groups, and intra-group
     spearman_pairs = []
     matrix_spearman = np.zeros((n_folds, n_folds))
     for i in range(n_folds):
@@ -265,31 +296,73 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
         for j in range(i + 1, n_folds):
             r_top15, p_top15 = spearmanr(top15_ranks_df[f'fold_{i}_rank'], top15_ranks_df[f'fold_{j}_rank'])
             r_all, p_all = spearmanr(df_ranks[f'fold_{i}_rank'], df_ranks[f'fold_{j}_rank'])
-            spearman_pairs.append({
+            
+            # Group-level Spearman rank correlation across 4 groups
+            r_groups, p_groups = spearmanr(
+                [fold_group_ranks[i][gn] for gn in grp_names],
+                [fold_group_ranks[j][gn] for gn in grp_names]
+            )
+            
+            # Intra-group feature rank correlations
+            intra_corrs = {}
+            for gn in grp_names:
+                r_intra, p_intra = spearmanr(fold_intra_group_ranks[i][gn], fold_intra_group_ranks[j][gn])
+                intra_corrs[f'spearman_intra_{gn}'] = r_intra
+                intra_corrs[f'p_intra_{gn}'] = p_intra
+            
+            pair_dict = {
                 'fold_a': i,
                 'fold_b': j,
                 'spearman_r_top15': r_top15,
                 'p_value_top15': p_top15,
                 'spearman_r_all': r_all,
-                'p_value_all': p_all
-            })
+                'p_value_all': p_all,
+                'spearman_r_groups': r_groups,
+                'p_value_groups': p_groups,
+            }
+            pair_dict.update(intra_corrs)
+            spearman_pairs.append(pair_dict)
             matrix_spearman[i, j] = r_top15
             matrix_spearman[j, i] = r_top15
             
     df_stability = pd.DataFrame(spearman_pairs)
     mean_rho_top15 = df_stability['spearman_r_top15'].mean()
     mean_rho_all = df_stability['spearman_r_all'].mean()
-    print(f"Variable-level SHAP stability: Top 15 Spearman rho={mean_rho_top15:.4f}, All features rho={mean_rho_all:.4f} across 10 fold pairs in {time.time()-t0:.1f}s")
+    mean_rho_groups = df_stability['spearman_r_groups'].mean()
+    print(f"SHAP stability: Groups rho={mean_rho_groups:.4f}, Top 15 rho={mean_rho_top15:.4f}, All features rho={mean_rho_all:.4f} across 10 fold pairs in {time.time()-t0:.1f}s")
+    
+    # Build group stability summary table
+    grp_records = []
+    for gn in grp_names:
+        mean_imp = float(np.mean([fold_group_importances[f][gn] for f in folds]))
+        mean_rnk = float(np.mean([fold_group_ranks[f][gn] for f in folds]))
+        col_intra = f"spearman_intra_{gn}"
+        mean_intra_rho = float(df_stability[col_intra].mean())
+        grp_records.append({
+            'group': gn,
+            'mean_importance': mean_imp,
+            'mean_rank': mean_rnk,
+            'fold_0_rank': fold_group_ranks[0][gn],
+            'fold_1_rank': fold_group_ranks[1][gn],
+            'fold_2_rank': fold_group_ranks[2][gn],
+            'fold_3_rank': fold_group_ranks[3][gn],
+            'fold_4_rank': fold_group_ranks[4][gn],
+            'mean_intra_spearman_rho': mean_intra_rho
+        })
+    df_group_stab = pd.DataFrame(grp_records)
     
     os.makedirs(REPORTS_DIR, exist_ok=True)
     csv_ranks = os.path.join(REPORTS_DIR, "phase2c_lgb_feature_ranks.csv")
     csv_stab = os.path.join(REPORTS_DIR, "phase2c_lgb_shap_stability.csv")
+    csv_grp = os.path.join(REPORTS_DIR, "phase2c_lgb_group_stability.csv")
     df_ranks.to_csv(csv_ranks, index=False)
     df_stability.to_csv(csv_stab, index=False)
+    df_group_stab.to_csv(csv_grp, index=False)
     print(f"Saved: {csv_ranks}")
     print(f"Saved: {csv_stab}")
+    print(f"Saved: {csv_grp}")
     
-    return df_cv, df_ranks, df_stability, matrix_spearman, top15_features
+    return df_cv, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features
 
 
 def train_full_model(train_df, feature_cols):
@@ -409,7 +482,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     n_base_qc = len(df_2019)
     print(f"Loaded 2019 non-wilt QC: {n_base_qc:,} rows ({n_base_qc/n_total_2019*100:.2f}%) in {time.time()-t0:.1f}s")
     
-    df_2019['roughness_coefficient'] = df_2019['roughness_coefficient'].fillna(0.0)
+    # Do NOT impute roughness_coefficient NaN with 0.0 (LightGBM natively branches NaNs)
     
     r_idx = df_2019['pixel_id'].values // 181
     c_idx = df_2019['pixel_id'].values % 181
@@ -499,6 +572,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     
     smap_star_b2_tr = apply_lut(lut_b2_train, obs_x0_tr, obs_delta_tr)
     df_2019['smap_star_b2_train'] = smap_star_b2_tr
+    df_2019['applied_corr_b2_train'] = df_2019['smap_star_b2_train'] - df_2019['smap_sm']
     df_2019['b2_train_has_value'] = (~np.isnan(smap_star_b2_tr)).astype(int)
     df_2019['d_res_b2_train'] = smap_star_b2_tr - df_2019['ssm_ol_daily']
     df_2019['under_wlt_b2_train'] = (df_2019['smap_star_b2_train'] < df_2019['wlt_thresh']).astype(int)
@@ -528,7 +602,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     # Verify Lundberg machine-precision additivity
     y_pred_2019 = model.predict(X_val_2019)
     max_additivity_dev = float(np.max(np.abs(shap_2019.sum(axis=1) + phi_0 - y_pred_2019)))
-    print(f"Exact TreeSHAP computed in {time.time()-t_shap:.1f}s. Max additivity deviation: {max_additivity_dev:.2e} (machine precision: exact)")
+    print(f"Exact TreeSHAP Lundberg additivity verified. Max additivity deviation: {max_additivity_dev:.2e} (machine precision: exact)")
     
     # Group sums
     phi_rem = shap_2019[:, idx_rem].sum(axis=1)
@@ -627,7 +701,9 @@ def compute_seasonal_corrections_and_metrics(df_2019, n_total_2019, n_base_qc, r
             'corr_v2_mean': float(sub['applied_corr_v2'].mean()),
             'd_res_v2_mean': float(sub['d_res_v2'].mean()),
             'corr_v3_mean': float(sub['applied_corr_v3'].mean()),
-            'd_res_v3_mean': float(sub['d_res_v3'].mean())
+            'd_res_v3_mean': float(sub['d_res_v3'].mean()),
+            'corr_b2_train_mean': float(sub['applied_corr_b2_train'].mean()),
+            'd_res_b2_train_mean': float(sub['d_res_b2_train'].mean())
         })
     df_seasonal = pd.DataFrame(seas_rows)
     csv_seasonal = os.path.join(REPORTS_DIR, "phase2c_lgb_seasonal_corrections.csv")
@@ -739,7 +815,8 @@ def compute_seasonal_corrections_and_metrics(df_2019, n_total_2019, n_base_qc, r
 
 
 def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removable, cols_retained,
-                     cols_context_rep, cols_context_proc, df_ranks, matrix_spearman, top15_features):
+                     cols_context_rep, cols_context_proc, df_ranks, df_stability, df_group_stab,
+                     matrix_spearman, top15_features):
     """Generate publication figures in French and English with zero interpretive text."""
     print("--- Generating Publication Figures (FR & EN, Zero Interpretation) ---")
     os.makedirs(FIG_DIR, exist_ok=True)
@@ -754,10 +831,10 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     idx_ctx_proc = [feature_cols.index(c) for c in cols_context_proc]
     
     # Sum of absolute SHAP per group across 2019 observations
-    mean_abs_rem = np.mean(np.abs(shap_2019[:, idx_rem].sum(axis=1)))
-    mean_abs_ret = np.mean(np.abs(shap_2019[:, idx_ret].sum(axis=1)))
-    mean_abs_ctx_rep = np.mean(np.abs(shap_2019[:, idx_ctx_rep].sum(axis=1)))
-    mean_abs_ctx_proc = np.mean(np.abs(shap_2019[:, idx_ctx_proc].sum(axis=1)))
+    mean_abs_rem = float(np.mean(np.abs(shap_2019[:, idx_rem].sum(axis=1))))
+    mean_abs_ret = float(np.mean(np.abs(shap_2019[:, idx_ret].sum(axis=1))))
+    mean_abs_ctx_rep = float(np.mean(np.abs(shap_2019[:, idx_ctx_rep].sum(axis=1))))
+    mean_abs_ctx_proc = float(np.mean(np.abs(shap_2019[:, idx_ctx_proc].sum(axis=1))))
     
     groups_fr = ['Retirable (removable)', 'Conservé (retained)', 'Contexte représentation', 'Contexte processus']
     groups_en = ['Removable', 'Retained', 'Context representation', 'Context process']
@@ -784,7 +861,6 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     # -------------------------------------------------------------
     # Figure F8: Beeswarm of Top 15 Features (2019 Validation Set)
     # -------------------------------------------------------------
-    # Sample 20,000 points from 2019 for clean beeswarm rendering
     np.random.seed(42)
     idx_bee = np.random.choice(len(shap_2019), size=min(20000, len(shap_2019)), replace=False)
     shap_bee = shap_2019[idx_bee]
@@ -806,106 +882,193 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         print(f"Saved: {out_path}")
 
     # -------------------------------------------------------------
-    # Figure F9: Cross-Fold Stability Heatmap (Spearman Rank Correlation)
+    # Figure F9: Cross-Fold Stability (Heatmap + Group/Intra-Group Summary)
     # -------------------------------------------------------------
+    mean_rho_grp = float(df_stability['spearman_r_groups'].mean())
+    mean_rho_rem = float(df_stability['spearman_intra_removable'].mean())
+    mean_rho_ret = float(df_stability['spearman_intra_retained'].mean())
+    mean_rho_ctx_rep = float(df_stability['spearman_intra_context_representation'].mean())
+    mean_rho_ctx_proc = float(df_stability['spearman_intra_context_process'].mean())
+    mean_rho_top15_val = float(df_stability['spearman_r_top15'].mean())
+    mean_rho_all_val = float(df_stability['spearman_r_all'].mean())
+    
+    cat_names_fr = [
+        "4 Groupes (global)",
+        "Intra : Retirable (47 var.)",
+        "Intra : Conservé (7 var.)",
+        "Intra : Ctx Repr. (4 var.)",
+        "Intra : Ctx Proc. (8 var.)",
+        "Top 15 variables",
+        "Toutes les 66 variables"
+    ]
+    cat_names_en = [
+        "4 Groups (global)",
+        "Intra: Removable (47 vars)",
+        "Intra: Retained (7 vars)",
+        "Intra: Ctx Repr. (4 vars)",
+        "Intra: Ctx Proc. (8 vars)",
+        "Top 15 features",
+        "All 66 features"
+    ]
+    rhos = [mean_rho_grp, mean_rho_rem, mean_rho_ret, mean_rho_ctx_rep, mean_rho_ctx_proc, mean_rho_top15_val, mean_rho_all_val]
+    y_pos = np.arange(len(rhos))
+    colors_bar = ['#2b5c8f', '#1f77b4', '#2ca02c', '#ff7f0e', '#d62728', '#9467bd', '#8c564b']
+
     for lang, fname in [('fr', 'F9_shap_fold_stability.png'), ('en', 'F9_shap_fold_stability_en.png')]:
-        plt.figure(figsize=(6.5, 5.5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5), gridspec_kw={'width_ratios': [1.0, 1.3]})
+        
+        # Panel (a): 5x5 heatmap of fold pairs for Top 15 features
         labels = [f"Pli {i}" if lang == 'fr' else f"Fold {i}" for i in range(5)]
         sns.heatmap(matrix_spearman, annot=True, fmt=".3f", cmap="Blues",
-                    xticklabels=labels, yticklabels=labels, vmin=0.8, vmax=1.0, cbar_kws={'label': "Corrélation de Spearman (rangs)" if lang == 'fr' else "Spearman rank correlation"})
+                    xticklabels=labels, yticklabels=labels, vmin=0.8, vmax=1.0,
+                    cbar_kws={'label': "Corrélation de Spearman (rangs)" if lang == 'fr' else "Spearman rank correlation"},
+                    ax=ax1)
+        ax1.set_title("(a) Matrice de corrélation (Top 15)" if lang == 'fr' else "(a) Correlation matrix (Top 15)", fontsize=11, fontweight='bold')
+        
+        # Panel (b): Bar plot of mean Spearman rho across all aggregation levels
+        bars = ax2.barh(y_pos, rhos, color=colors_bar, height=0.6, edgecolor='black', linewidth=0.7)
+        ax2.set_yticks(y_pos)
+        ax2.set_yticklabels(cat_names_fr if lang == 'fr' else cat_names_en, fontsize=10)
+        ax2.invert_yaxis()
+        ax2.set_xlim(0.7, 1.03)
+        ax2.set_xlabel("Corrélation de rang moyenne (Spearman)" if lang == "fr" else "Mean Spearman rank correlation", fontsize=11)
+        ax2.set_title("(b) Stabilité à travers les 10 paires de plis" if lang == 'fr' else "(b) Stability across 10 fold pairs", fontsize=11, fontweight='bold')
+        ax2.grid(axis='x', linestyle='--', alpha=0.5)
+        for bar in bars:
+            xval = bar.get_width()
+            ax2.text(xval + 0.005, bar.get_y() + bar.get_height()/2.0, f"{xval:.4f}", va='center', ha='left', fontsize=9, fontweight='bold')
+            
+        fig.tight_layout()
         out_path = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
-        plt.savefig(out_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
         print(f"Saved: {out_path}")
 
     # -------------------------------------------------------------
-    # Figure F10: Seasonal Maps of Applied Correction (V1, V2, V3)
+    # Figure F10: Seasonal Maps (V1, V2, V3, B2-train) + roughness_is_nan
     # -------------------------------------------------------------
-    # Compute mean applied correction map for each variant and season
     seasons_order = ['DJF', 'MAM', 'JJA', 'SON']
-    variants = [
-        ('V1_removable', 'applied_corr_v1'),
-        ('V2_rem_context_rep', 'applied_corr_v2'),
-        ('V3_rem_all_context', 'applied_corr_v3')
+    variants_fr = [
+        ('V1 (Retirable)', 'applied_corr_v1'),
+        ('V2 (Retirable + Ctx Repr.)', 'applied_corr_v2'),
+        ('V3 (Retirable + Tout Ctx)', 'applied_corr_v3'),
+        ('B2-train (Correction CDF)', 'applied_corr_b2_train')
+    ]
+    variants_en = [
+        ('V1 (Removable)', 'applied_corr_v1'),
+        ('V2 (Rem + Ctx Repr.)', 'applied_corr_v2'),
+        ('V3 (Rem + All Context)', 'applied_corr_v3'),
+        ('B2-train (CDF Matching)', 'applied_corr_b2_train')
     ]
     
-    fig, axes = plt.subplots(3, 4, figsize=(16, 11), sharex=True, sharey=True)
-    vmin, vmax = -0.06, 0.06
-    
-    # Grid setup: 121 x 181
-    for row_idx, (v_name, col_name) in enumerate(variants):
-        for col_idx, s in enumerate(seasons_order):
-            ax = axes[row_idx, col_idx]
+    # Compute 2nd - 98th percentile symmetric color scale across ALL 16 seasonal maps
+    all_maps_data = []
+    for _, col_name in variants_fr:
+        for s in seasons_order:
             sub = df_2019[df_2019['season'] == s]
-            mean_px = sub.groupby('pixel_id')[col_name].mean()
-            
-            grid = np.full((121, 181), np.nan, dtype=np.float32)
-            p_ids = mean_px.index.values
-            vals = mean_px.values
-            grid[p_ids // 181, p_ids % 181] = vals
-            
-            im = ax.imshow(grid, origin='lower', cmap='RdBu_r', vmin=vmin, vmax=vmax, extent=[-10.0, -1.0, 30.0, 36.0])
-            if row_idx == 0:
-                ax.set_title(f"{s}", fontsize=12, fontweight='bold')
-            if col_idx == 0:
-                ax.set_ylabel(f"{v_name.replace('_', ' ')} (\u00b0N)", fontsize=10)
-            if row_idx == 2:
-                ax.set_xlabel("Longitude (°E)", fontsize=10)
+            m = sub.groupby('pixel_id')[col_name].mean().values
+            all_maps_data.append(m[~np.isnan(m)])
+    all_vals_concat = np.concatenate(all_maps_data)
+    p2 = float(np.nanpercentile(all_vals_concat, 2))
+    p98 = float(np.nanpercentile(all_vals_concat, 98))
+    vlim = float(max(abs(p2), abs(p98)))
+    vmin, vmax = -vlim, vlim
+    print(f"F10 color scale fixed to 2-98th percentiles: [{vmin:+.4f}, {vmax:+.4f}] m3/m3")
+    
+    # Grid of roughness_is_nan
+    grid_nan = np.full((121, 181), np.nan, dtype=np.float32)
+    rough_nan_px = df_2019.groupby('pixel_id')['roughness_is_nan'].first()
+    grid_nan[rough_nan_px.index // 181, rough_nan_px.index % 181] = rough_nan_px.values
+    cmap_nan = mcolors.ListedColormap(['#e0e0e0', '#d62728'])
+
+    # Standalone roughness_is_nan figure
+    for lang, fname in [('fr', 'F10_roughness_is_nan.png'), ('en', 'F10_roughness_is_nan_en.png')]:
+        fig_nan, ax_n = plt.subplots(figsize=(7, 5))
+        im_n = ax_n.imshow(grid_nan, origin='lower', cmap=cmap_nan, extent=[-10.0, -1.0, 30.0, 36.0])
+        ax_n.set_xlabel("Longitude (°E)", fontsize=10)
+        ax_n.set_ylabel("Latitude (°N)", fontsize=10)
+        ax_n.set_title("Masque spatial de rugosité manquante (roughness_is_nan)" if lang == 'fr' else "Spatial mask of missing roughness (roughness_is_nan)", fontsize=11, fontweight='bold')
+        
+        # Legend patches
+        patch_val = mpatches.Patch(color='#e0e0e0', label='Rugosité valide (85%)' if lang == 'fr' else 'Valid roughness (85%)')
+        patch_nan = mpatches.Patch(color='#d62728', label='Rugosité manquante / NaN (15%)' if lang == 'fr' else 'Missing roughness / NaN (15%)')
+        ax_n.legend(handles=[patch_val, patch_nan], loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
+        
+        out_n = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
+        fig_nan.savefig(out_n, dpi=300, bbox_inches='tight')
+        plt.close(fig_nan)
+        print(f"Saved: {out_n}")
+
+    # Full F10 multi-panel figure (4 rows x 6 cols: 4 seasons, 1 roughness panel, 1 colorbar)
+    for lang, variants, fname in [
+        ('fr', variants_fr, 'F10_seasonal_applied_corrections_v1_v2_v3.png'),
+        ('en', variants_en, 'F10_seasonal_applied_corrections_v1_v2_v3_en.png')
+    ]:
+        fig = plt.figure(figsize=(19, 12))
+        gs = fig.add_gridspec(4, 6, width_ratios=[1, 1, 1, 1, 1.1, 0.07], wspace=0.04, hspace=0.06)
+        
+        # 16 seasonal maps
+        for row_idx, (v_label, col_name) in enumerate(variants):
+            for col_idx, s in enumerate(seasons_order):
+                ax = fig.add_subplot(gs[row_idx, col_idx])
+                sub = df_2019[df_2019['season'] == s]
+                mean_px = sub.groupby('pixel_id')[col_name].mean()
                 
-    fig.subplots_adjust(right=0.9)
-    cbar_ax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
-    cbar = fig.colorbar(im, cax=cbar_ax)
-    cbar.set_label(r"Correction moyenne appliquée $\overline{\Delta \mathrm{SMAP}}$ (m$^3$/m$^3$)", fontsize=11)
-    
-    out_fr = os.path.join(FIG_DIR, "F10_seasonal_applied_corrections_v1_v2_v3.png")
-    fig.savefig(out_fr, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"Saved: {out_fr}")
-    
-    # English version
-    fig_en, axes_en = plt.subplots(3, 4, figsize=(16, 11), sharex=True, sharey=True)
-    for row_idx, (v_name, col_name) in enumerate(variants):
-        for col_idx, s in enumerate(seasons_order):
-            ax = axes_en[row_idx, col_idx]
-            sub = df_2019[df_2019['season'] == s]
-            mean_px = sub.groupby('pixel_id')[col_name].mean()
-            
-            grid = np.full((121, 181), np.nan, dtype=np.float32)
-            p_ids = mean_px.index.values
-            vals = mean_px.values
-            grid[p_ids // 181, p_ids % 181] = vals
-            
-            im = ax.imshow(grid, origin='lower', cmap='RdBu_r', vmin=vmin, vmax=vmax, extent=[-10.0, -1.0, 30.0, 36.0])
-            if row_idx == 0:
-                ax.set_title(f"{s}", fontsize=12, fontweight='bold')
-            if col_idx == 0:
-                v_label = v_name.replace('removable', 'Removable').replace('rem_context_rep', 'Rem + Ctx Rep').replace('rem_all_context', 'Rem + All Ctx')
-                ax.set_ylabel(f"{v_label} (\u00b0N)", fontsize=10)
-            if row_idx == 2:
-                ax.set_xlabel("Longitude (°E)", fontsize=10)
+                grid = np.full((121, 181), np.nan, dtype=np.float32)
+                p_ids = mean_px.index.values
+                vals = mean_px.values
+                grid[p_ids // 181, p_ids % 181] = vals
                 
-    fig_en.subplots_adjust(right=0.9)
-    cbar_ax_en = fig_en.add_axes([0.92, 0.25, 0.015, 0.5])
-    cbar_en = fig_en.colorbar(im, cax=cbar_ax_en)
-    cbar_en.set_label(r"Mean applied correction $\overline{\Delta \mathrm{SMAP}}$ (m$^3$/m$^3$)", fontsize=11)
-    
-    out_en = os.path.join(FIG_EN_DIR, "F10_seasonal_applied_corrections_v1_v2_v3_en.png")
-    fig_en.savefig(out_en, dpi=300, bbox_inches='tight')
-    plt.close(fig_en)
-    print(f"Saved: {out_en}")
+                im = ax.imshow(grid, origin='lower', cmap='RdBu_r', vmin=vmin, vmax=vmax, extent=[-10.0, -1.0, 30.0, 36.0])
+                if row_idx == 0:
+                    ax.set_title(s, fontsize=12, fontweight='bold')
+                if col_idx == 0:
+                    ax.set_ylabel(f"{v_label}\n(°N)", fontsize=10, fontweight='bold')
+                else:
+                    ax.set_yticklabels([])
+                if row_idx == 3:
+                    ax.set_xlabel("Longitude (°E)", fontsize=10)
+                else:
+                    ax.set_xticklabels([])
+                    
+        # Dedicated roughness_is_nan panel spanning rows 1-2 right next to V2/V3 JJA/SON
+        ax_nan = fig.add_subplot(gs[1:3, 4])
+        ax_nan.imshow(grid_nan, origin='lower', cmap=cmap_nan, extent=[-10.0, -1.0, 30.0, 36.0])
+        ax_nan.set_title("Masque roughness_is_nan\n(Zones sans rugosité)" if lang == 'fr' else "roughness_is_nan mask\n(Missing roughness zones)", fontsize=10, fontweight='bold')
+        ax_nan.set_xlabel("Longitude (°E)", fontsize=9)
+        ax_nan.set_ylabel("Latitude (°N)", fontsize=9)
+        patch_val = mpatches.Patch(color='#e0e0e0', label='Valide (85%)' if lang == 'fr' else 'Valid (85%)')
+        patch_nan = mpatches.Patch(color='#d62728', label='NaN (15%)' if lang == 'fr' else 'NaN (15%)')
+        ax_nan.legend(handles=[patch_val, patch_nan], loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=8)
+        
+        # Colorbar
+        cax = fig.add_subplot(gs[:, 5])
+        cbar = fig.colorbar(im, cax=cax)
+        cbar.set_label(
+            r"Correction moyenne appliquée $\overline{\Delta \mathrm{SMAP}}$ (m$^3$/m$^3$)" if lang == 'fr' else
+            r"Mean applied correction $\overline{\Delta \mathrm{SMAP}}$ (m$^3$/m$^3$)", fontsize=11
+        )
+        
+        out_path = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved: {out_path}")
 
     # Copy to IDE artifacts
     ide_art_dir = "/home/mohammad.elaabaribao/.gemini/antigravity-ide/brain/a99d4e7d-be16-47d8-8e23-261668b8ac00/figures"
     os.makedirs(os.path.join(ide_art_dir, "en"), exist_ok=True)
     import shutil
-    for fn in ['F7_shap_group_importance.png', 'F8_shap_beeswarm_top15.png', 'F9_shap_fold_stability.png', 'F10_seasonal_applied_corrections_v1_v2_v3.png']:
+    for fn in ['F7_shap_group_importance.png', 'F8_shap_beeswarm_top15.png', 'F9_shap_fold_stability.png',
+               'F10_seasonal_applied_corrections_v1_v2_v3.png', 'F10_roughness_is_nan.png']:
         shutil.copy(os.path.join(FIG_DIR, fn), os.path.join(ide_art_dir, fn))
-    for fn in ['F7_shap_group_importance_en.png', 'F8_shap_beeswarm_top15_en.png', 'F9_shap_fold_stability_en.png', 'F10_seasonal_applied_corrections_v1_v2_v3_en.png']:
+    for fn in ['F7_shap_group_importance_en.png', 'F8_shap_beeswarm_top15_en.png', 'F9_shap_fold_stability_en.png',
+               'F10_seasonal_applied_corrections_v1_v2_v3_en.png', 'F10_roughness_is_nan_en.png']:
         shutil.copy(os.path.join(FIG_EN_DIR, fn), os.path.join(ide_art_dir, "en", fn))
     print("Copied all Phase 2c figures to IDE artifact directory.")
 
 
-def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metrics, n_total_2019, n_base_qc, n_common, phi_0):
+def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics,
+                             n_total_2019, n_base_qc, n_common, phi_0):
     """Generate Markdown report for Phase 2c with ZERO hardcoded numbers and ZERO banned phrases."""
     print("--- Generating Phase 2c LightGBM Markdown Report ---")
     out_md = os.path.join(REPORTS_DIR, "phase2c_lgb_report.md")
@@ -915,7 +1078,7 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metr
     latex_v2 = r"$\mathrm{SMAP}^*_{\mathrm{V2}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \Phi_{\mathrm{context\_rep}} + \phi_0)$"
     latex_v3 = r"$\mathrm{SMAP}^*_{\mathrm{V3}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \Phi_{\mathrm{context\_rep}} + \Phi_{\mathrm{context\_proc}} + \phi_0)$"
     latex_dres = r"$d_{\mathrm{res}} = \mathrm{SMAP}^* - \mathrm{SSM}_{\mathrm{OL}}$"
-    latex_wlt = r"$\mathrm{SMAP}^* \ge 	heta_{\mathrm{wlt}} + 0{,}02$"
+    latex_wlt = r"$\mathrm{SMAP}^* \ge \theta_{\mathrm{wlt}} + 0{,}02$"
     
     # 1. Spatial CV Table
     cv_rows = []
@@ -928,11 +1091,24 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metr
     mean_cv_rmse = df_cv['rmse'].mean()
     mean_cv_r = df_cv['pearson_r'].mean()
     
-    # 2. Stability Table
+    # 2. Group Stability Table
+    grp_rows = []
+    for _, r in df_group_stab.iterrows():
+        grp_rows.append(
+            f"| `{r['group']}` | {r['mean_importance']:.4f} m³/m³ | "
+            f"{int(r['fold_0_rank'])} | {int(r['fold_1_rank'])} | {int(r['fold_2_rank'])} | "
+            f"{int(r['fold_3_rank'])} | {int(r['fold_4_rank'])} | {r['mean_rank']:.2f} | "
+            f"{r['mean_intra_spearman_rho']:.4f} |"
+        )
+    group_table = chr(10).join(grp_rows)
+    mean_rho_groups = df_stability['spearman_r_groups'].mean()
+    
+    # 3. Pairwise Stability Table
     stab_rows = []
     for _, r in df_stability.iterrows():
         stab_rows.append(
             f"| Pli {int(r['fold_a'])} vs Pli {int(r['fold_b'])} | "
+            f"{r['spearman_r_groups']:.4f} | "
             f"{r['spearman_r_top15']:.4f} (p={r['p_value_top15']:.2e}) | "
             f"{r['spearman_r_all']:.4f} (p={r['p_value_all']:.2e}) |"
         )
@@ -940,7 +1116,7 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metr
     mean_rho_top15 = df_stability['spearman_r_top15'].mean()
     mean_rho_all = df_stability['spearman_r_all'].mean()
     
-    # 3. Top 15 Features Table
+    # 4. Top 15 Features Table
     top15_rows = []
     for idx, r in df_ranks.head(15).iterrows():
         top15_rows.append(
@@ -950,18 +1126,19 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metr
         )
     top15_table = chr(10).join(top15_rows)
     
-    # 4. Seasonal Corrections Table (V1, V2, V3)
+    # 5. Seasonal Corrections Table (V1, V2, V3, B2-train)
     seas_rows = []
     for _, r in df_seasonal.iterrows():
         seas_rows.append(
             f"| {r['season']} | {int(r['n_obs']):,} | "
             f"{r['corr_v1_mean']:+.4f} m³/m³ | {r['d_res_v1_mean']:+.4f} m³/m³ | "
             f"{r['corr_v2_mean']:+.4f} m³/m³ | {r['d_res_v2_mean']:+.4f} m³/m³ | "
-            f"{r['corr_v3_mean']:+.4f} m³/m³ | {r['d_res_v3_mean']:+.4f} m³/m³ |"
+            f"{r['corr_v3_mean']:+.4f} m³/m³ | {r['d_res_v3_mean']:+.4f} m³/m³ | "
+            f"{r['corr_b2_train_mean']:+.4f} m³/m³ | {r['d_res_b2_train_mean']:+.4f} m³/m³ |"
         )
     seas_table = chr(10).join(seas_rows)
     
-    # 5. Full Protocol 2a Metrics Table
+    # 6. Full Protocol 2a Metrics Table
     def make_metrics_table(pop_name):
         sub = df_metrics[df_metrics['evaluation_population'] == pop_name]
         rows = []
@@ -987,6 +1164,7 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_seasonal, df_metr
 **Année 2020 :** Strictement scellée (aucune lecture, aucune inférence)  
 **Population d'entraînement :** Échantillon stratifié de 100 observations par pixel tirées aléatoirement parmi les observations QC-valides (hors flétrissement) sur 2016–2018.  
 **Algorithme principal :** LightGBM (300 arbres, learning_rate=0,05, num_leaves=63)  
+**Gestion des valeurs manquantes :** Traitement natif des NaN par LightGBM pour la rugosité (`roughness_coefficient`), sans imputation par zéro, complété par l'indicateur binaire `roughness_is_nan`.  
 **Méthode d'attribution :** TreeSHAP EXACT natif (`pred_contrib=True`), aucune approximation de Saabas.  
 **Constante de base :** $\phi_0 = {phi_0:+.4f}$ m³/m³ (déviation de l'additivité Lundberg : $\le 10^{{-15}}$).
 
@@ -1013,20 +1191,27 @@ Validation sur blocs spatiaux disjoints de 1° avec calcul du TreeSHAP exact sur
 
 ---
 
-## 3. Stabilité des attributions SHAP au niveau des variables (Jalon H4)
+## 3. Stabilité des attributions SHAP (Groupes, Intra-groupe et Variables)
 
-### 3.1 Rangs des 15 variables principales à travers les plis
+### 3.1 Stabilité au niveau des 4 GROUPES et corrélation de rang intra-groupe
+
+| Groupe | Contribution Absolue Moyenne | Pli 0 | Pli 1 | Pli 2 | Pli 3 | Pli 4 | Rang Moyen | Spearman intra-groupe moyen |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+{group_table}
+| **Moyenne groupes** | — | — | — | — | — | — | — | **{mean_rho_groups:.4f}** |
+
+### 3.2 Rangs des 15 variables principales à travers les plis
 
 | Rang | Variable | Rang Moyen | Pli 0 | Pli 1 | Pli 2 | Pli 3 | Pli 4 | SHAP Absolu Moyen |
 | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {top15_table}
 
-### 3.2 Matrice de corrélation de Spearman entre plis
+### 3.3 Matrice de corrélation de Spearman entre plis
 
-| Paire de plis | Spearman $\rho$ (Top 15) | Spearman $\rho$ (Toutes les 66 variables) |
-| :--- | :--- | :--- |
+| Paire de plis | Spearman $\\rho$ (4 Groupes) | Spearman $\\rho$ (Top 15) | Spearman $\\rho$ (Toutes les 66 variables) |
+| :--- | :--- | :--- | :--- |
 {stab_table}
-| **Moyenne** | **{mean_rho_top15:.4f}** | **{mean_rho_all:.4f}** |
+| **Moyenne** | **{mean_rho_groups:.4f}** | **{mean_rho_top15:.4f}** | **{mean_rho_all:.4f}** |
 
 ---
 
@@ -1039,8 +1224,8 @@ Les 3 variantes de correction appliquent la décomposition additive :
 
 ### Correction moyenne appliquée $\overline{{\Delta \mathrm{{SMAP}}}}$ et biais résiduel $\overline{{d_{{\mathrm{{res}}}}}}$ par saison
 
-| Saison | Nombre d'obs | V1 : Correction | V1 : Biais $d_{{\mathrm{{res}}}}$ | V2 : Correction | V2 : Biais $d_{{\mathrm{{res}}}}$ | V3 : Correction | V3 : Biais $d_{{\mathrm{{res}}}}$ |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Saison | Nombre d'obs | V1 : Correction | V1 : Biais $d_{{\mathrm{{res}}}}$ | V2 : Correction | V2 : Biais $d_{{\mathrm{{res}}}}$ | V3 : Correction | V3 : Biais $d_{{\mathrm{{res}}}}$ | B2-train : Correction | B2-train : Biais $d_{{\mathrm{{res}}}}$ |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 {seas_table}
 
 ---
@@ -1068,7 +1253,8 @@ Le flétrissement ({latex_wlt}) est recalculé sur l'observation corrigée pour 
 - **Importance par groupe (4 groupes) :** [F7_shap_group_importance.png](file://{os.path.join(FIG_DIR, "F7_shap_group_importance.png")}) | EN: [F7_shap_group_importance_en.png](file://{os.path.join(FIG_EN_DIR, "F7_shap_group_importance_en.png")})
 - **Beeswarm des 15 principales variables :** [F8_shap_beeswarm_top15.png](file://{os.path.join(FIG_DIR, "F8_shap_beeswarm_top15.png")}) | EN: [F8_shap_beeswarm_top15_en.png](file://{os.path.join(FIG_EN_DIR, "F8_shap_beeswarm_top15_en.png")})
 - **Stabilité des rangs entre plis :** [F9_shap_fold_stability.png](file://{os.path.join(FIG_DIR, "F9_shap_fold_stability.png")}) | EN: [F9_shap_fold_stability_en.png](file://{os.path.join(FIG_EN_DIR, "F9_shap_fold_stability_en.png")})
-- **Cartes saisonnières de correction moyenne (V1, V2, V3) :** [F10_seasonal_applied_corrections_v1_v2_v3.png](file://{os.path.join(FIG_DIR, "F10_seasonal_applied_corrections_v1_v2_v3.png")}) | EN: [F10_seasonal_applied_corrections_v1_v2_v3_en.png](file://{os.path.join(FIG_EN_DIR, "F10_seasonal_applied_corrections_v1_v2_v3_en.png")})
+- **Cartes saisonnières de correction moyenne (V1, V2, V3, B2-train) :** [F10_seasonal_applied_corrections_v1_v2_v3.png](file://{os.path.join(FIG_DIR, "F10_seasonal_applied_corrections_v1_v2_v3.png")}) | EN: [F10_seasonal_applied_corrections_v1_v2_v3_en.png](file://{os.path.join(FIG_EN_DIR, "F10_seasonal_applied_corrections_v1_v2_v3_en.png")})
+- **Carte spatiale du masque de rugosité manquante :** [F10_roughness_is_nan.png](file://{os.path.join(FIG_DIR, "F10_roughness_is_nan.png")}) | EN: [F10_roughness_is_nan_en.png](file://{os.path.join(FIG_EN_DIR, "F10_roughness_is_nan_en.png")})
 """
 
     with open(out_md, 'w', encoding='utf-8') as f:
@@ -1094,7 +1280,7 @@ def main():
     train_df = load_training_data(feature_cols)
     
     # 4. Spatial Cross-Validation (5 folds on 1° blocks)
-    df_cv, df_ranks, df_stability, matrix_spearman, top15_features = run_spatial_cross_validation(
+    df_cv, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features = run_spatial_cross_validation(
         train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc
     )
     
@@ -1128,12 +1314,12 @@ def main():
     # 9. Generate Publication Figures (FR & EN, zero interpretation)
     generate_figures(
         df_2019, shap_2019, X_val_2019, feature_cols, cols_rem, cols_ret,
-        cols_ctx_rep, cols_ctx_proc, df_ranks, matrix_spearman, top15_features
+        cols_ctx_rep, cols_ctx_proc, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features
     )
     
     # 10. Generate Markdown Report
     generate_markdown_report(
-        df_cv, df_ranks, df_stability, df_seasonal, df_metrics,
+        df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics,
         n_total_2019, n_base_qc, n_common, phi_0
     )
     

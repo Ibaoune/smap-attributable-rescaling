@@ -11,9 +11,9 @@
 
 Un événement d'humidification sans précipitation est défini par :
 - Un intervalle temporel de 1 à 3 jours entre deux observations du même passage au même pixel.
-- Une élévation d'humidité du sol : $\Delta 	ext{SM} > 	au_{	ext{sm}}$.
-- Un cumul de précipitations IMERG sur l'intervalle : $	ext{Rain}_{t_1 	o t_2} < 	au_{	ext{rain}}$.
-- Configuration par défaut : $	au_{	ext{sm}} = 0.03	ext{ m}^3/	ext{m}^3$, $	au_{	ext{rain}} = 1.0	ext{ mm}$.
+- Une élévation d'humidité du sol : $\Delta \mathrm{SM} > \tau_{\mathrm{sm}}$.
+- Un cumul de précipitations IMERG sur l'intervalle : $\mathrm{Rain}_{t_1 \to t_2} < \tau_{\mathrm{rain}}$.
+- Configuration par défaut : $\tau_{\mathrm{sm}}$ = 0.03 m³/m³, $\tau_{\mathrm{rain}}$ = 1.0 mm.
 
 ---
 
@@ -21,29 +21,30 @@ Un événement d'humidification sans précipitation est défini par :
 
 - **Nombre total de paires de passages successifs** : 13,878,569
 - **Événements détectés sur SMAP (ensemble du domaine et de l'année)** : 261,486 (1.884%, IC 95% : [1.465%, 2.288%])
+- **Règle de fiabilité spatiale** : Conformément au protocole, toute strate présentant moins de 5 blocs spatiaux distincts de 1° est classée comme « non interprétable » (aucun IC n'est rapporté en raison de l'absence de degrés de liberté spatiaux suffisants).
 
 ---
 
 ## 3. Différence de Différences (DiD) : [Fréquence >30 % − 0 %] en Été (JJA) vs Hiver (DJF)
 
-Contraste $\Delta_{	ext{DiD}} = [f(>30\%) - f(0\%)]_{	ext{JJA}} - [f(>30\%) - f(0\%)]_{	ext{DJF}}$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
+Contraste $\Delta_{\mathrm{DiD}} = [f(>30\%) - f(0\%)]_{\mathrm{JJA}} - [f(>30\%) - f(0\%)]_{\mathrm{DJF}}$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
 
 | Texture | Contraste JJA (>30% − 0%) | Contraste DJF (>30% − 0%) | Différence de Différences (DiD) | Pixels (>30% / 0%) | Blocs 1° (>30% / 0%) |
 |:---|:---:|:---:|:---:|:---:|:---:|
 | Clay Loam | +2.428% [-1.495%, +10.731%] | +1.359% [-2.135%, +6.757%] | **+1.069%** [-2.347%, +5.379%] | 252/331 px | 9/15 blk |
 | Loam | +1.244% [-0.357%, +3.905%] | +1.514% [-0.158%, +3.172%] | **-0.270%** [-1.254%, +1.952%] | 117/7467 px | 11/46 blk |
-| Sandy Clay Loam | +nan% [+nan%, +nan%] | +nan% [+nan%, +nan%] | **+nan%** [+nan%, +nan%] | 0/613 px | 0/8 blk |
-| Sandy Loam | +9.138% [-2.241%, +21.604%] | +5.874% [-1.452%, +14.525%] | **+3.264%** [-0.981%, +7.183%] | 14/312 px | 3/12 blk |
-| Clay | +5.127% [-1.858%, +12.717%] | -0.288% [-4.691%, +4.897%] | **+5.414%** [+2.114%, +8.523%] | 26/136 px | 3/7 blk |
+| Sandy Clay Loam | non interprétable | non interprétable | **non interprétable** | 0/613 px | 0/8 blk (< 5) |
+| Sandy Loam | non interprétable | non interprétable | **non interprétable** | 14/312 px | 3/12 blk (< 5) |
+| Clay | non interprétable | non interprétable | **non interprétable** | 26/136 px | 3/7 blk (< 5) |
 | All | +3.095% [+0.360%, +7.595%] | +3.355% [+0.917%, +6.266%] | **-0.260%** [-2.411%, +2.328%] | 433/9412 px | 14/48 blk |
 
 ---
 
 ## 4. Test de Tendance Continue : Fréquence d'Humidification vs Fraction GMIA Continue
 
-Pente de régression linéaire $eta$ (% de fréquence par 100% de GMIA) et corrélation de Pearson $r$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° :
+Pente de régression linéaire $\beta$ (% de fréquence par 100% de GMIA) et corrélation de Pearson $r$ avec intervalles de confiance à 95% par bootstrap par blocs de 1° :
 
-| Texture | Saison | Paires analysées | Pente linéaire $eta$ [IC 95%] | Corrélation $r$ [IC 95%] | Échantillon spatial |
+| Texture | Saison | Paires analysées | Pente linéaire $\beta$ [IC 95%] | Corrélation $r$ [IC 95%] | Échantillon spatial |
 |:---|:---:|:---:|:---:|:---:|:---:|
 | Clay Loam | JJA | 267,286 | +3.277% [-1.699%, +16.027%] | +0.0527 [-0.0306, +0.1767] | 1,056 px, 19 blk |
 | Clay Loam | DJF | 273,734 | +3.057% [-2.564%, +11.734%] | +0.0395 [-0.0332, +0.1291] | 1,058 px, 19 blk |
