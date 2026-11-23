@@ -245,3 +245,12 @@ def test_no_cv_fold_or_replace_true_in_script10():
     assert "cv_fold" not in cv_code, "Found 'cv_fold' in run_spatial_cross_validation!"
     assert "replace=True" not in cv_code, "Found 'replace=True' in run_spatial_cross_validation!"
     assert "spatial_fold" in cv_code, "Expected 'spatial_fold' in run_spatial_cross_validation!"
+
+def test_script11_no_fit_call():
+    """Verify that scripts/11_test_2020_sealed.py does not retrain any model (no '.fit(' call)."""
+    script_path = os.path.join(ROOT_DIR, "scripts", "11_test_2020_sealed.py")
+    assert os.path.exists(script_path), "scripts/11_test_2020_sealed.py not found!"
+    with open(script_path, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert ".fit(" not in code, "Found forbidden '.fit(' call in scripts/11_test_2020_sealed.py!"
