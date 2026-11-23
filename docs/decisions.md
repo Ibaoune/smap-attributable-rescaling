@@ -192,3 +192,4 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
      - Critère de succès fixé avant ouverture : V2 bat B2-train sur le biais absolu et sur r_anom_with_smap_raw, sur l'échantillon spécifique et sur l'échantillon commun, et la RMSE sur l'échantillon commun ne dépasse pas celle de B2-train de plus de 5 %.
      - 2020 est ouvert une seule fois ; aucune modification de code, de groupes ou de seuils après ouverture ; un résultat défavorable est rapporté tel quel.
 - **Statut** : Actée.
+- **Erratum de libellé (Phase 3)** : Le libellé « Verdict global avant ouverture » figurant dans le rapport de Phase 3 (`reports/phase3_test2020_report.md`, section 1) doit se lire « Verdict de la Décision 15 ». Le rapport reste strictement inchangé.
