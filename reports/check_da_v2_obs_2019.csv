@@ -1,0 +1,2 @@
+year,n_files,n_ease_cells_tested,max_ease_diff,mean_ease_diff,n_obs_5km_compared,mean_point_diff_5km,median_point_diff_5km,p95_point_diff_5km,p99_point_diff_5km,max_point_diff_5km
+2019,332,1196100,0.0,0.0,3660799,0.0031478508603763854,0.0012656958894106396,0.012128407078300207,0.029232961535070028,0.13784439067384488

@@ -39,3 +39,6 @@ experiments/**/OUTPUT_*/
 experiments/**/*.log*
 experiments/**/MPFilltest*
 experiments/**/SMAP_filelist.dat
+
+experiments/**/*.h5
+experiments/**/obs/
