@@ -8,33 +8,26 @@ Domain: NorthMor 0.05 deg (121 x 181, 16,030 land pixels)
 Evaluation: 2019 (split == 'val')
 Strict rule: 2020 remains strictly sealed!
 
-Protocol requirements (Point de contrôle 6 review):
-1. Reproductibility: All reports and figures generated dynamically from data; zero manual numbers.
-2. Training sample: Stratified sample of 100 observations per pixel across 2016-2018
-   (among non-wilt QC valid observations). Documented explicitly.
-3. LightGBM with EXACT TreeSHAP (pred_contrib=True) on all 2019 observations.
-   No Saabas approximations; exact Lundberg machine-precision additivity verified.
-   Random Forest retained solely as comparison.
-4. Feature groups in configs/predictors.yaml:
-   - removable (47 features): static physiography + SMAP retrieval parameters + pass
-   - retained (7 features): GMIA fraction + precipitation discrepancies & antecedent rain
-   - context_representation (4 features): doy_sin, doy_cos, ssm_lag1, ssm_rel_wilt_ref_lag1
-   - context_process (8 features): sm_layer2/3/4_lag1, rzsm_lag1, et_lag1, surface_runoff_lag1,
-     baseflow_lag1, lai_lag1
-5. Attribution correction variants (all with base value phi_0):
-   - V1: removable (SMAP* = SMAP - (Phi_rem + phi_0))
-   - V2: removable + context_representation (SMAP* = SMAP - (Phi_rem + Phi_ctx_rep + phi_0))
-   - V3: removable + all context (SMAP* = SMAP - (Phi_rem + Phi_ctx_rep + Phi_ctx_proc + phi_0))
-   For each variant: mean applied correction and residual bias of d_res per season (DJF, MAM, JJA, SON)
-   in addition to full protocol 2a metrics.
-6. Baseline B2-train: LDT CDF reconstructed strictly on 2016-01-01 to 2019-01-01 included in all comparisons.
-7. Variable-level SHAP stability: Ranks of top 15 features across 5 spatial folds (Spearman rank correlation)
-   evaluated on at least 20,000 points per fold.
-8. Publication figures in French and English, zero interpretive text:
+Protocol requirements (Point de contrôle 7c):
+1. Zero hardcoded numbers in reports and figures. All metrics dynamically computed from data.
+2. Training sample: Stratified sample of 100 observations per pixel across 2016-2018 (non-wilt QC valid).
+3. Missing roughness: NaNs in roughness_coefficient left intact for native LightGBM branching;
+   roughness_is_nan kept as binary indicator predictor.
+4. Exact Lundberg TreeSHAP via LightGBM C++ API (pred_contrib=True) on all 2019 observations.
+5. Baseline B1: learned on ALL 2016-2018 observations passing non-wilt QC (Phase 2a definition).
+6. Baseline B2-train: LDT CDF reconstructed strictly on 2016-01-01 -> 2019-01-01.
+7. Evaluation metrics:
+   - r_smapstar_vs_ol: Pearson correlation between SMAP* and SSM_OL.
+   - r_anom_with_smap_raw: Anomaly correlation between SMAP* and raw SMAP (pixel x month mean subtracted).
+   - GMIA contrast (Clay Loam JJA >30% vs 0%) with 1° block bootstrap 95% CIs and distinct block counts (< 5 blocks = non interpretable).
+   - Seasonal metrics (assimilable, wilt rejections, bias, RMSE, correlations) by season for all references.
+8. Figures in French and English:
    - F7: Group importance (4 groups)
    - F8: Beeswarm plot of top 15 features in 2019
-   - F9: Cross-fold stability heatmap
-   - F10: Seasonal maps of mean applied correction for V1, V2, V3.
+   - F9: Cross-fold stability (Heatmap Top 15 + Bar plot of mean Spearman rho across all levels)
+   - F10: Seasonal maps (V1, V2, V3, B2-train) with 2-98th percentile symmetric color scale,
+     accompanied by side-by-side maps of roughness_is_nan and Noah-MP dominant soil texture with identical dimensions.
+   - Standalone companion figures: F10_roughness_is_nan and F10_dominant_soiltype.
 """
 
 import os
@@ -70,9 +63,8 @@ CDF_MODEL_FILE = os.path.join(BASE_DIR, "data", "raw_copied", "noahmp_model_cdf_
 CDF_OBS_FILE = os.path.join(BASE_DIR, "data", "raw_copied", "smap_obs_cdf_NorthMor.nc")
 LUT_CACHE_FILE = os.path.join(BASE_DIR, "data", "interim", "lut_cdf_rescaling.npy")
 
-LDT_TRAIN_DIR = os.path.join(BASE_DIR, "experiments", "ldt_b2_train")
-CDF_B2_TRAIN_OBS = os.path.join(LDT_TRAIN_DIR, "OUTPUT_obs", "smap_obs_cdf_NorthMor.nc")
-CDF_B2_TRAIN_MOD = os.path.join(LDT_TRAIN_DIR, "OUTPUT_model", "noahmp_model_cdf_NorthMor.nc")
+CDF_B2_TRAIN_MOD = os.path.join(BASE_DIR, "experiments", "ldt_b2_train", "OUTPUT_model", "noahmp_model_cdf_NorthMor.nc")
+CDF_B2_TRAIN_OBS = os.path.join(BASE_DIR, "experiments", "ldt_b2_train", "OUTPUT_obs", "smap_obs_cdf_NorthMor.nc")
 LUT_B2_TRAIN_FILE = os.path.join(BASE_DIR, "data", "interim", "lut_cdf_b2_train.npy")
 
 TEXTURE_NAMES = {
@@ -88,118 +80,133 @@ def load_feature_groups():
     with open(CONFIG_PREDICTORS, 'r') as f:
         cfg = yaml.safe_load(f)
 
-    # Removable group: static physiography + retrieval params + pass
     cols_removable = [
         'elevation', 'slope_deg', 'slopetype',
-        'vegetation_opacity', 'vegetation_water_content',
+        'texture_frac_1', 'texture_frac_2', 'texture_frac_3', 'texture_frac_4',
+        'texture_frac_5', 'texture_frac_6', 'texture_frac_7', 'texture_frac_8',
+        'texture_frac_9', 'texture_frac_10', 'texture_frac_11', 'texture_frac_12',
+        'texture_frac_13', 'texture_frac_14', 'texture_frac_15', 'texture_frac_16',
+        'landcover_frac_1', 'landcover_frac_2', 'landcover_frac_3', 'landcover_frac_4',
+        'landcover_frac_5', 'landcover_frac_6', 'landcover_frac_7', 'landcover_frac_8',
+        'landcover_frac_9', 'landcover_frac_10', 'landcover_frac_11', 'landcover_frac_12',
+        'landcover_frac_13', 'landcover_frac_14', 'landcover_frac_15', 'landcover_frac_16',
+        'landcover_frac_17', 'landcover_frac_18', 'landcover_frac_19', 'landcover_frac_20',
+        'static_water_body_fraction', 'surface_flag',
         'surface_temperature', 'roughness_coefficient', 'roughness_is_nan',
-        'static_water_body_fraction', 'surface_flag', 'pass_is_pm'
-    ] + [f'texture_frac_{i}' for i in range(1, 17)] + [f'landcover_frac_{i}' for i in range(1, 21)]
-
-    # Retained group: GMIA + precip discrepancies + antecedent rainfall
+        'vegetation_opacity', 'vegetation_water_content', 'pass_is_pm'
+    ]
     cols_retained = [
         'irrigfrac_gmia', 'delta_precip_imerg_mswep', 'precip_mswep',
         'precip_1d_sum', 'precip_3d_sum', 'precip_7d_sum', 'days_since_rain_gt_1mm'
     ]
-
-    # Context representation group (4 features)
     cols_context_rep = [
         'doy_sin', 'doy_cos', 'ssm_lag1', 'ssm_rel_wilt_ref_lag1'
     ]
-
-    # Context process group (8 features)
     cols_context_proc = [
         'sm_layer2_lag1', 'sm_layer3_lag1', 'sm_layer4_lag1',
         'rzsm_lag1', 'et_lag1', 'surface_runoff_lag1', 'baseflow_lag1', 'lai_lag1'
     ]
-
     feature_cols = cols_removable + cols_retained + cols_context_rep + cols_context_proc
     return cols_removable, cols_retained, cols_context_rep, cols_context_proc, feature_cols
 
 
 def load_training_data(feature_cols):
-    """Load 2016-2018 non-wilt QC valid data and perform stratified sampling:
-       strictly 100 observations per pixel across 2016-2018.
-    """
+    """Load 2016-2018 training data with stratified sampling: 100 observations per pixel."""
     print("--- Loading 2016-2018 Training Data (Stratified Sampling: 100 obs/pixel) ---")
     t0 = time.time()
     
-    meta_cols = ['pixel_id', 'date', 'month', 'season', 'pass', 'spatial_block_id', 'spatial_fold', 'split', 'target_d', 'smap_sm', 'ssm_ol_daily']
-    qc_cols = ['qc_lis_rain', 'qc_lis_frozen', 'qc_lis_forest', 'qc_lis_snow', 'qc_lis_high_veg', 'qc_lis_sat_limit', 'qc_lis_vwc_gt_5']
-    load_cols = list(set(feature_cols + meta_cols + qc_cols))
+    meta_cols = ['pixel_id', 'month', 'target_d', 'spatial_block_id',
+                 'qc_lis_rain', 'qc_lis_frozen', 'qc_lis_forest', 'qc_lis_snow',
+                 'qc_lis_high_veg', 'qc_lis_sat_limit', 'qc_lis_vwc_gt_5', 'smap_sm']
+    load_cols = list(set(feature_cols + meta_cols))
     
     dfs = []
-    for y in [2016, 2017, 2018]:
-        p = os.path.join(TABLE_DIR, f"sar_modeling_table_{y}.parquet")
-        df = pd.read_parquet(p, columns=load_cols)
-        qc_nw = (
-            (df['split'] == 'train') &
-            (df['qc_lis_rain'] == 0) &
-            (df['qc_lis_frozen'] == 0) &
-            (df['qc_lis_forest'] == 0) &
-            (df['qc_lis_snow'] == 0) &
-            (df['qc_lis_high_veg'] == 0) &
-            (df['qc_lis_sat_limit'] == 0) &
-            (df['qc_lis_vwc_gt_5'] == 0) &
-            (~df['smap_sm'].isna())
-        )
-        df_valid = df[qc_nw].copy()
-        dfs.append(df_valid)
-        print(f"  Year {y}: loaded {len(df_valid):,} non-wilt QC valid rows")
+    for year in [2016, 2017, 2018]:
+        pq_path = os.path.join(TABLE_DIR, f"sar_modeling_table_{year}.parquet")
+        df_y = pd.read_parquet(pq_path, columns=load_cols)
         
-    train_df = pd.concat(dfs, ignore_index=True)
-    del dfs
-    gc.collect()
-
-    # Stratified sampling: up to 100 observations per pixel across 2016-2018
-    train_df['rand'] = np.random.RandomState(42).rand(len(train_df))
-    train_sampled = train_df.sort_values(['pixel_id', 'rand']).groupby('pixel_id').head(100).reset_index(drop=True)
+        qc_nw = (
+            (df_y['qc_lis_rain'] == 0) &
+            (df_y['qc_lis_frozen'] == 0) &
+            (df_y['qc_lis_forest'] == 0) &
+            (df_y['qc_lis_snow'] == 0) &
+            (df_y['qc_lis_high_veg'] == 0) &
+            (df_y['qc_lis_sat_limit'] == 0) &
+            (df_y['qc_lis_vwc_gt_5'] == 0) &
+            (~df_y['target_d'].isna()) &
+            (~df_y['smap_sm'].isna())
+        )
+        df_valid = df_y[qc_nw][['pixel_id', 'target_d', 'spatial_block_id'] + feature_cols].copy()
+        print(f"  Year {year}: loaded {len(df_valid):,} non-wilt QC valid rows")
+        dfs.append(df_valid)
+        
+    full_train_df = pd.concat(dfs, ignore_index=True)
     
-    # Do NOT impute roughness_coefficient NaN with 0.0 (LightGBM natively branches NaNs)
+    # Stratified sampling: 100 observations per pixel (with replacement only if count < 100)
+    np.random.seed(42)
+    def sample_px(group):
+        n = len(group)
+        if n >= 100:
+            return group.sample(n=100, replace=False, random_state=42)
+        else:
+            return group.sample(n=100, replace=True, random_state=42)
+            
+    full_train_df['pixel_id_copy'] = full_train_df['pixel_id']
+    train_sampled = full_train_df.groupby('pixel_id', group_keys=False).apply(sample_px)
+    train_sampled['pixel_id'] = train_sampled['pixel_id_copy']
+    train_sampled = train_sampled.drop(columns=['pixel_id_copy']).sample(frac=1.0, random_state=42).reset_index(drop=True)
     
-    n_train = len(train_sampled)
-    n_pixels = int(train_sampled['pixel_id'].nunique())
-    print(f"Training set ready: {n_train:,} rows across {n_pixels:,} pixels (stratified 100 obs/px) in {time.time()-t0:.2f}s")
+    # Native NaNs kept for roughness_coefficient (LightGBM natively branches NaNs)
+    n_pixels = train_sampled['pixel_id'].nunique()
+    print(f"Training set ready: {len(train_sampled):,} rows across {n_pixels:,} pixels in {time.time()-t0:.2f}s")
     return train_sampled
 
 
-def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_retained, cols_context_rep, cols_context_proc):
-    """Perform 5-fold balanced spatial cross-validation and evaluate variable- and group-level SHAP stability."""
+def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc):
+    """5-Fold Spatial Cross-Validation on 1° blocks with exact Lundberg TreeSHAP stability analysis."""
     print("--- Running 5-Fold Spatial Cross-Validation with LightGBM Exact TreeSHAP ---")
     t0 = time.time()
     
-    folds = sorted(train_df['spatial_fold'].unique())
-    n_folds = len(folds)
+    unique_blocks = np.sort(train_df['spatial_block_id'].unique())
+    n_blocks = len(unique_blocks)
+    n_folds = 5
+    
+    np.random.seed(42)
+    shuffled_blocks = np.random.permutation(unique_blocks)
+    block_folds = {b: i % n_folds for i, b in enumerate(shuffled_blocks)}
+    train_df['cv_fold'] = train_df['spatial_block_id'].map(block_folds)
+    
+    cv_records = []
+    fold_shaps = []
+    
+    # Indices of groups
+    idx_rem = [feature_cols.index(c) for c in cols_rem]
+    idx_ret = [feature_cols.index(c) for c in cols_ret]
+    idx_ctx_rep = [feature_cols.index(c) for c in cols_ctx_rep]
+    idx_ctx_proc = [feature_cols.index(c) for c in cols_ctx_proc]
     
     group_dict = {
-        'removable': [feature_cols.index(c) for c in cols_removable],
-        'retained': [feature_cols.index(c) for c in cols_retained],
-        'context_representation': [feature_cols.index(c) for c in cols_context_rep],
-        'context_process': [feature_cols.index(c) for c in cols_context_proc]
+        'removable': idx_rem,
+        'retained': idx_ret,
+        'context_representation': idx_ctx_rep,
+        'context_process': idx_ctx_proc
     }
     grp_names = list(group_dict.keys())
-    fold_group_importances = {f: {} for f in folds}
-    fold_intra_group_ranks = {f: {} for f in folds}
     
-    # Track metrics and feature importances
-    cv_records = []
-    fold_feature_importances = {f: np.zeros(len(feature_cols)) for f in folds}
-    fold_feature_ranks = {f: np.zeros(len(feature_cols)) for f in folds}
+    fold_group_importances = {}
+    fold_intra_group_ranks = {f: {} for f in range(n_folds)}
     
-    for fold in folds:
-        t_f0 = time.time()
-        tr_mask = (train_df['spatial_fold'] != fold)
-        va_mask = (train_df['spatial_fold'] == fold)
+    for fold in range(n_folds):
+        t_fold = time.time()
+        tr = train_df[train_df['cv_fold'] != fold]
+        va = train_df[train_df['cv_fold'] == fold]
         
-        X_tr = train_df.loc[tr_mask, feature_cols].values.astype(np.float32)
-        y_tr = train_df.loc[tr_mask, 'target_d'].values.astype(np.float32)
+        X_tr = tr[feature_cols].values.astype(np.float32)
+        y_tr = tr['target_d'].values.astype(np.float32)
+        X_va = va[feature_cols].values.astype(np.float32)
+        y_va = va['target_d'].values.astype(np.float32)
         
-        val_df_fold = train_df.loc[va_mask].copy()
-        X_va = val_df_fold[feature_cols].values.astype(np.float32)
-        y_va = val_df_fold['target_d'].values.astype(np.float32)
-        
-        # Fit LightGBM model
-        lgb_reg = lgb.LGBMRegressor(
+        model_fold = lgb.LGBMRegressor(
             objective='regression',
             metric='rmse',
             boosting_type='gbdt',
@@ -213,61 +220,62 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
             n_jobs=8,
             verbose=-1
         )
-        lgb_reg.fit(X_tr, y_tr)
+        model_fold.fit(X_tr, y_tr)
         
-        y_pred = lgb_reg.predict(X_va)
-        rmse_val = np.sqrt(np.mean((y_pred - y_va) ** 2))
+        y_pred = model_fold.predict(X_va)
+        rmse_val = float(np.sqrt(np.mean((y_pred - y_va) ** 2)))
         r_val, _ = pearsonr(y_pred, y_va)
-        bias_val = np.mean(y_pred - y_va)
+        bias_val = float(np.mean(y_pred - y_va))
         
-        # Subsample at least 25,000 points from validation fold for TreeSHAP
-        n_sample_shap = min(25000, len(X_va))
-        np.random.seed(42 + fold)
-        shap_idx = np.random.choice(len(X_va), size=n_sample_shap, replace=False)
-        X_shap = X_va[shap_idx]
-        
-        # Native exact Lundberg TreeSHAP via C++ API
-        contrib = lgb_reg.booster_.predict(X_shap, pred_contrib=True)
-        shap_vals = contrib[:, :-1]
-        
-        mean_abs_shap = np.mean(np.abs(shap_vals), axis=0)
-        fold_feature_importances[fold] = mean_abs_shap
-        
-        # Rank features: rank 1 is highest importance
-        # argsort of -mean_abs gives order of indices from highest to lowest
-        order = np.argsort(-mean_abs_shap)
-        ranks = np.empty_like(order)
-        ranks[order] = np.arange(1, len(feature_cols) + 1)
-        fold_feature_ranks[fold] = ranks
-        
-        # Group absolute importances and intra-group feature ranks
-        for g_name, g_idx in group_dict.items():
-            g_contrib = shap_vals[:, g_idx].sum(axis=1)
-            fold_group_importances[fold][g_name] = float(np.mean(np.abs(g_contrib)))
-            
-            sub_shap = mean_abs_shap[g_idx]
-            order_g = np.argsort(-sub_shap)
-            ranks_g = np.empty_like(order_g)
-            ranks_g[order_g] = np.arange(1, len(g_idx) + 1)
-            fold_intra_group_ranks[fold][g_name] = ranks_g
-        
-        print(f"  Fold {fold}: Val RMSE={rmse_val:.4f}, r={r_val:.4f}, Bias={bias_val:+.4f} (SHAP on {n_sample_shap:,} pts) in {time.time()-t_f0:.1f}s")
         cv_records.append({
             'fold': fold,
-            'n_train': int(tr_mask.sum()),
-            'n_val': int(va_mask.sum()),
+            'n_train': len(X_tr),
+            'n_val': len(X_va),
             'rmse': rmse_val,
             'pearson_r': r_val,
             'bias': bias_val
         })
         
+        # Exact TreeSHAP on validation sample (25,000 pts)
+        n_shap = min(25000, len(X_va))
+        np.random.seed(42 + fold)
+        shap_idx = np.random.choice(len(X_va), size=n_shap, replace=False)
+        X_shap = X_va[shap_idx]
+        
+        contrib = model_fold.booster_.predict(X_shap, pred_contrib=True)
+        shap_vals = contrib[:, :-1]
+        mean_abs_shap = np.mean(np.abs(shap_vals), axis=0)
+        fold_shaps.append(mean_abs_shap)
+        
+        # Group-level mean absolute attribution
+        grp_imps = {}
+        for gn, g_indices in group_dict.items():
+            g_imp = float(np.mean(np.abs(shap_vals[:, g_indices].sum(axis=1))))
+            grp_imps[gn] = g_imp
+            
+            # Intra-group ranks
+            g_shap_sub = mean_abs_shap[g_indices]
+            ord_intra = np.argsort(-g_shap_sub)
+            rnks_intra = np.empty_like(ord_intra)
+            rnks_intra[ord_intra] = np.arange(1, len(g_indices) + 1)
+            fold_intra_group_ranks[fold][gn] = rnks_intra
+            
+        fold_group_importances[fold] = grp_imps
+        
+        print(f"  Fold {fold}: Val RMSE={rmse_val:.4f}, r={r_val:.4f}, Bias={bias_val:+.4f} (SHAP on {n_shap:,} pts) in {time.time()-t_fold:.1f}s")
+        
     df_cv = pd.DataFrame(cv_records)
     
     # Feature rank table
     df_ranks = pd.DataFrame({'feature': feature_cols})
-    for fold in folds:
-        df_ranks[f'fold_{fold}_rank'] = fold_feature_ranks[fold]
-        df_ranks[f'fold_{fold}_shap'] = fold_feature_importances[fold]
+    folds = list(range(n_folds))
+    for f in folds:
+        f_shap = fold_shaps[f]
+        df_ranks[f'fold_{f}_shap'] = f_shap
+        order = np.argsort(-f_shap)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(1, len(f_shap) + 1)
+        df_ranks[f'fold_{f}_rank'] = ranks
         
     rank_cols = [f'fold_{f}_rank' for f in folds]
     shap_cols = [f'fold_{f}_shap' for f in folds]
@@ -275,7 +283,6 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
     df_ranks['mean_shap'] = df_ranks[shap_cols].mean(axis=1)
     df_ranks = df_ranks.sort_values('mean_rank').reset_index(drop=True)
     
-    # Top 15 features overall
     top15_features = df_ranks.head(15)['feature'].tolist()
     top15_ranks_df = df_ranks.head(15).copy()
     
@@ -288,7 +295,7 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
         rnks[ord_g] = np.arange(1, len(grp_names) + 1)
         fold_group_ranks[fold] = {gn: int(rnks[k]) for k, gn in enumerate(grp_names)}
         
-    # Pairwise Spearman rank correlations across folds for variables, groups, and intra-group
+    # Pairwise Spearman correlations across folds
     spearman_pairs = []
     matrix_spearman = np.zeros((n_folds, n_folds))
     for i in range(n_folds):
@@ -297,13 +304,11 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
             r_top15, p_top15 = spearmanr(top15_ranks_df[f'fold_{i}_rank'], top15_ranks_df[f'fold_{j}_rank'])
             r_all, p_all = spearmanr(df_ranks[f'fold_{i}_rank'], df_ranks[f'fold_{j}_rank'])
             
-            # Group-level Spearman rank correlation across 4 groups
             r_groups, p_groups = spearmanr(
                 [fold_group_ranks[i][gn] for gn in grp_names],
                 [fold_group_ranks[j][gn] for gn in grp_names]
             )
             
-            # Intra-group feature rank correlations
             intra_corrs = {}
             for gn in grp_names:
                 r_intra, p_intra = spearmanr(fold_intra_group_ranks[i][gn], fold_intra_group_ranks[j][gn])
@@ -331,7 +336,7 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
     mean_rho_groups = df_stability['spearman_r_groups'].mean()
     print(f"SHAP stability: Groups rho={mean_rho_groups:.4f}, Top 15 rho={mean_rho_top15:.4f}, All features rho={mean_rho_all:.4f} across 10 fold pairs in {time.time()-t0:.1f}s")
     
-    # Build group stability summary table
+    # Group stability table
     grp_records = []
     for gn in grp_names:
         mean_imp = float(np.mean([fold_group_importances[f][gn] for f in folds]))
@@ -352,15 +357,9 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_removable, cols_re
     df_group_stab = pd.DataFrame(grp_records)
     
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    csv_ranks = os.path.join(REPORTS_DIR, "phase2c_lgb_feature_ranks.csv")
-    csv_stab = os.path.join(REPORTS_DIR, "phase2c_lgb_shap_stability.csv")
-    csv_grp = os.path.join(REPORTS_DIR, "phase2c_lgb_group_stability.csv")
-    df_ranks.to_csv(csv_ranks, index=False)
-    df_stability.to_csv(csv_stab, index=False)
-    df_group_stab.to_csv(csv_grp, index=False)
-    print(f"Saved: {csv_ranks}")
-    print(f"Saved: {csv_stab}")
-    print(f"Saved: {csv_grp}")
+    df_ranks.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_feature_ranks.csv"), index=False)
+    df_stability.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_shap_stability.csv"), index=False)
+    df_group_stab.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_group_stability.csv"), index=False)
     
     return df_cv, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features
 
@@ -396,14 +395,10 @@ def load_or_build_b2_train_lut(landmask):
     """Load or build lookup table for Baseline B2-train (LDT reconstructed on 2016-01-01 -> 2019-01-01)."""
     if os.path.exists(LUT_B2_TRAIN_FILE):
         print(f"Loading cached B2-train CDF LUT from {LUT_B2_TRAIN_FILE}...")
-        lut = np.load(LUT_B2_TRAIN_FILE)
-        return lut
+        return np.load(LUT_B2_TRAIN_FILE)
         
     print("Building B2-train CDF lookup table from LDT output files...")
     t0 = time.time()
-    if not (os.path.exists(CDF_B2_TRAIN_MOD) and os.path.exists(CDF_B2_TRAIN_OBS)):
-        raise FileNotFoundError(f"LDT B2-train netCDF files not found: {CDF_B2_TRAIN_MOD} or {CDF_B2_TRAIN_OBS}")
-        
     with nc.Dataset(CDF_B2_TRAIN_MOD) as ds_m:
         model_x = ds_m.variables['SoilMoist_xrange'][:, 0, :, :]
         model_cdf = ds_m.variables['SoilMoist_CDF'][:, 0, :, :]
@@ -446,6 +441,37 @@ def load_or_build_b2_train_lut(landmask):
     return lut
 
 
+def learn_b1_climatology():
+    """Learn B1 pixel-month mean bias on ALL 2016-2018 non-wilt QC observations (definition of Phase 2a)."""
+    print("--- Learning B1 Climatology on ALL 2016-2018 Non-wilt QC Observations ---")
+    t0 = time.time()
+    qc_cols = [
+        'qc_lis_rain', 'qc_lis_frozen', 'qc_lis_forest', 'qc_lis_snow',
+        'qc_lis_high_veg', 'qc_lis_sat_limit', 'qc_lis_vwc_gt_5'
+    ]
+    dfs = []
+    for y in [2016, 2017, 2018]:
+        pq = os.path.join(TABLE_DIR, f"sar_modeling_table_{y}.parquet")
+        df_y = pd.read_parquet(pq, columns=['pixel_id', 'month', 'target_d'] + qc_cols)
+        qc_nw = (
+            (df_y['qc_lis_rain'] == 0) &
+            (df_y['qc_lis_frozen'] == 0) &
+            (df_y['qc_lis_forest'] == 0) &
+            (df_y['qc_lis_snow'] == 0) &
+            (df_y['qc_lis_high_veg'] == 0) &
+            (df_y['qc_lis_sat_limit'] == 0) &
+            (df_y['qc_lis_vwc_gt_5'] == 0) &
+            (~df_y['target_d'].isna())
+        )
+        dfs.append(df_y.loc[qc_nw, ['pixel_id', 'month', 'target_d']])
+    full_train = pd.concat(dfs, ignore_index=True)
+    climatology = full_train.groupby(['pixel_id', 'month'])['target_d'].mean().to_dict()
+    pixel_fallback = full_train.groupby('pixel_id')['target_d'].mean().to_dict()
+    global_fallback = float(full_train['target_d'].mean())
+    print(f"B1 Climatology learned on all {len(full_train):,} rows across 2016-2018 in {time.time()-t0:.1f}s")
+    return climatology, pixel_fallback, global_fallback
+
+
 def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained, cols_context_rep, cols_context_proc,
                              lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, climatology, pixel_fallback, global_fallback):
     """Evaluate 2019 validation set using exact Lundberg TreeSHAP and compute all variants (V1, V2, V3)."""
@@ -482,8 +508,6 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     n_base_qc = len(df_2019)
     print(f"Loaded 2019 non-wilt QC: {n_base_qc:,} rows ({n_base_qc/n_total_2019*100:.2f}%) in {time.time()-t0:.1f}s")
     
-    # Do NOT impute roughness_coefficient NaN with 0.0 (LightGBM natively branches NaNs)
-    
     r_idx = df_2019['pixel_id'].values // 181
     c_idx = df_2019['pixel_id'].values % 181
     wlt_thresh = soil_wlt[r_idx, c_idx] + 0.02
@@ -500,7 +524,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
                 t += 1
     tiles = tile_map[r_idx, c_idx]
     
-    # --- 1. Baseline B0: No correction ---
+    # 1. Baseline B0: No correction
     df_2019['smap_star_b0'] = df_2019['smap_sm']
     df_2019['d_res_b0'] = df_2019['target_d']
     df_2019['under_wlt_b0'] = (df_2019['smap_star_b0'] < df_2019['wlt_thresh']).astype(int)
@@ -511,7 +535,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (~df_2019['smap_star_b0'].isna())
     )
     
-    # --- 2. Baseline B1: Climatology ---
+    # 2. Baseline B1: Climatology
     p_ids = df_2019['pixel_id'].values
     months = df_2019['month'].values
     c_hat = np.array([climatology.get((p, m), pixel_fallback.get(p, global_fallback)) for p, m in zip(p_ids, months)], dtype=np.float32)
@@ -525,7 +549,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (~df_2019['smap_star_b1'].isna())
     )
     
-    # --- 3. Baseline B2: CDF legacy (2016-2021) ---
+    # 3. Baseline B2: CDF legacy (2016-2021)
     with nc.Dataset(CDF_OBS_FILE) as ds_o:
         obs_x = ds_o.variables['SoilMoist_xrange'][:, 0, :, :]
     obs_delta = obs_x[1, :, :] - obs_x[0, :, :]
@@ -564,7 +588,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (df_2019['smap_star_b2'] <= 1.0)
     )
     
-    # --- 4. Baseline B2-train: CDF reconstructed on 2016-01-01 -> 2019-01-01 ---
+    # 4. Baseline B2-train: CDF reconstructed on 2016-01-01 -> 2019-01-01
     with nc.Dataset(CDF_B2_TRAIN_OBS) as ds_o_tr:
         obs_x_tr = ds_o_tr.variables['SoilMoist_xrange'][:, 0, :, :]
     obs_delta_tr = obs_x_tr[1, :, :] - obs_x_tr[0, :, :]
@@ -583,7 +607,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (df_2019['smap_star_b2_train'] <= 1.0)
     )
     
-    # --- 5. EXACT Lundberg TreeSHAP via LightGBM C++ API on ALL 2019 Observations ---
+    # 5. EXACT Lundberg TreeSHAP via LightGBM C++ API on ALL 2019 Observations
     X_val_2019 = df_2019[feature_cols].values.astype(np.float32)
     contrib_cache_file = os.path.join(BASE_DIR, "data", "interim", "lgb_contrib_2019.npy")
     if os.path.exists(contrib_cache_file):
@@ -616,7 +640,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     df_2019['phi_context_proc'] = phi_ctx_proc
     df_2019['phi_base_val'] = phi_0
     
-    # --- 6. Variants V1, V2, V3 ---
+    # 6. Variants V1, V2, V3
     # V1 = removable
     df_2019['smap_star_v1'] = df_2019['smap_sm'] - (phi_rem + phi_0)
     df_2019['applied_corr_v1'] = df_2019['smap_star_v1'] - df_2019['smap_sm']
@@ -641,7 +665,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (~df_2019['smap_star_v2'].isna())
     )
     
-    # V3 = removable + all context (representation + process) = RF-ctx analogue
+    # V3 = removable + all context
     df_2019['smap_star_v3'] = df_2019['smap_sm'] - (phi_rem + phi_ctx_rep + phi_ctx_proc + phi_0)
     df_2019['applied_corr_v3'] = df_2019['smap_star_v3'] - df_2019['smap_sm']
     df_2019['d_res_v3'] = df_2019['smap_star_v3'] - df_2019['ssm_ol_daily']
@@ -652,25 +676,8 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (df_2019['smap_star_v3'] <= 1.0) &
         (~df_2019['smap_star_v3'].isna())
     )
-    
-    # --- 7. Comparison with Random Forest (from Phase 2b) ---
-    rf_metrics_file = os.path.join(REPORTS_DIR, "phase2b_rf_metrics.csv")
-    rf_bias = np.nan
-    rf_rmse = np.nan
-    rf_ubrmse = np.nan
-    rf_r = np.nan
-    rf_wlt_pct = np.nan
-    if os.path.exists(rf_metrics_file):
-        df_rf_m = pd.read_csv(rf_metrics_file)
-        row_rf = df_rf_m[df_rf_m['stratum_name'] == 'Overall']
-        if len(row_rf) > 0:
-            rf_bias = float(row_rf['bias_rf_spec'].values[0])
-            rf_rmse = float(row_rf['rmse_rf_spec'].values[0])
-            rf_wlt_pct = float(row_rf['pct_rf_wlt'].values[0])
-            rf_ubrmse = float(np.sqrt(max(0.0, rf_rmse**2 - rf_bias**2)))
-            rf_r = 0.7729
 
-    # Common assimilable sample across B0, B1, B2, B2-train, V1, V2, V3
+    # Common assimilable sample across all 7 references
     df_2019['assimilable_common'] = (
         df_2019['assimilable_b0'] &
         df_2019['assimilable_b1'] &
@@ -681,14 +688,65 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         df_2019['assimilable_v3']
     )
     
-    return df_2019, shap_2019, X_val_2019, phi_0, n_total_2019, n_base_qc, (rf_bias, rf_rmse, rf_ubrmse, rf_r, rf_wlt_pct)
+    return df_2019, shap_2019, X_val_2019, phi_0, n_total_2019, n_base_qc
 
 
-def compute_seasonal_corrections_and_metrics(df_2019, n_total_2019, n_base_qc, rf_stats):
-    """Compute seasonal applied corrections and residual bias for V1, V2, V3, and full protocol 2a metrics."""
+def compute_gmia_contrast_bootstrap(sub, d_col, B=500):
+    """Compute GMIA >30% vs 0% contrast on Clay Loam JJA with 1° block bootstrap 95% CIs."""
+    sub_cl_jja = sub[(sub['texture_name'] == 'Clay Loam') & (sub['season'] == 'JJA')]
+    sub_0 = sub_cl_jja[sub_cl_jja['gmia_class'] == '0%']
+    sub_gt30 = sub_cl_jja[sub_cl_jja['gmia_class'] == '>30%']
+    n_px_0 = int(sub_0['pixel_id'].nunique())
+    n_px_gt30 = int(sub_gt30['pixel_id'].nunique())
+    n_blk_0 = int(sub_0['spatial_block_id'].nunique())
+    n_blk_gt30 = int(sub_gt30['spatial_block_id'].nunique())
+    
+    mean_0 = float(sub_0[d_col].mean()) if len(sub_0) > 0 else np.nan
+    mean_gt30 = float(sub_gt30[d_col].mean()) if len(sub_gt30) > 0 else np.nan
+    contrast = mean_gt30 - mean_0 if (not np.isnan(mean_0) and not np.isnan(mean_gt30)) else np.nan
+    
+    sub_both = sub_cl_jja[sub_cl_jja['gmia_class'].isin(['0%', '>30%'])]
+    n_blocks = int(sub_both['spatial_block_id'].nunique())
+    
+    if n_blk_0 < 5 or n_blk_gt30 < 5:
+        ci_low, ci_high = np.nan, np.nan
+        status = "non interprétable (< 5 blocs)"
+    elif len(sub_0) >= 10 and len(sub_gt30) >= 10 and n_blocks > 1:
+        stats = sub_both.groupby(['spatial_block_id', 'gmia_class'])[d_col].agg(['sum', 'count']).unstack('gmia_class').fillna(0)
+        sum_0 = stats[('sum', '0%')].values if ('sum', '0%') in stats else np.zeros(len(stats))
+        cnt_0 = stats[('count', '0%')].values if ('count', '0%') in stats else np.zeros(len(stats))
+        sum_gt30 = stats[('sum', '>30%')].values if ('sum', '>30%') in stats else np.zeros(len(stats))
+        cnt_gt30 = stats[('count', '>30%')].values if ('count', '>30%') in stats else np.zeros(len(stats))
+        
+        np.random.seed(42)
+        boot_diffs = np.empty(B)
+        for b in range(B):
+            idx = np.random.choice(n_blocks, size=n_blocks, replace=True)
+            c0 = cnt_0[idx].sum()
+            cgt = cnt_gt30[idx].sum()
+            m0 = (sum_0[idx].sum() / c0) if c0 > 0 else np.nan
+            mgt = (sum_gt30[idx].sum() / cgt) if cgt > 0 else np.nan
+            boot_diffs[b] = mgt - m0
+        valid_boot = boot_diffs[~np.isnan(boot_diffs)]
+        if len(valid_boot) > 50:
+            ci_low = float(np.percentile(valid_boot, 2.5))
+            ci_high = float(np.percentile(valid_boot, 97.5))
+            status = "interprétable"
+        else:
+            ci_low, ci_high = np.nan, np.nan
+            status = "non interprétable"
+    else:
+        ci_low, ci_high = np.nan, np.nan
+        status = "non interprétable"
+        
+    return contrast, ci_low, ci_high, n_px_gt30, n_px_0, n_blk_gt30, n_blk_0, status
+
+
+def compute_seasonal_corrections_and_metrics(df_2019, n_total_2019, n_base_qc):
+    """Compute seasonal applied corrections, full protocol 2a metrics, and seasonal stratified metrics."""
     print("--- Computing Seasonal Applied Corrections and Full Protocol 2a Metrics ---")
     
-    # Seasonal table for V1, V2, V3
+    # 1. Seasonal applied correction and residual bias table
     seasons = ['DJF', 'MAM', 'JJA', 'SON', 'Annual']
     seas_rows = []
     for s in seasons:
@@ -710,114 +768,133 @@ def compute_seasonal_corrections_and_metrics(df_2019, n_total_2019, n_base_qc, r
     df_seasonal.to_csv(csv_seasonal, index=False)
     print(f"Saved: {csv_seasonal}")
     
-    # Full protocol 2a metrics table
+    # 2. Full Protocol 2a metrics table (Annual, Specific and Common)
     models = [
-        ('B0_Raw', 'd_res_b0', 'assimilable_b0', 'under_wlt_b0'),
-        ('B1_Climatology', 'd_res_b1', 'assimilable_b1', 'under_wlt_b1'),
-        ('B2_CDF_Legacy', 'd_res_b2', 'assimilable_b2', 'under_wlt_b2'),
-        ('B2_train_CDF', 'd_res_b2_train', 'assimilable_b2_train', 'under_wlt_b2_train'),
-        ('LGB_V1_Removable', 'd_res_v1', 'assimilable_v1', 'under_wlt_v1'),
-        ('LGB_V2_Rem_ContextRep', 'd_res_v2', 'assimilable_v2', 'under_wlt_v2'),
-        ('LGB_V3_Rem_AllContext', 'd_res_v3', 'assimilable_v3', 'under_wlt_v3'),
+        ('B0_Raw', 'd_res_b0', 'smap_star_b0', 'assimilable_b0', 'under_wlt_b0'),
+        ('B1_Climatology', 'd_res_b1', 'smap_star_b1', 'assimilable_b1', 'under_wlt_b1'),
+        ('B2_CDF_Legacy', 'd_res_b2', 'smap_star_b2', 'assimilable_b2', 'under_wlt_b2'),
+        ('B2_train_CDF', 'd_res_b2_train', 'smap_star_b2_train', 'assimilable_b2_train', 'under_wlt_b2_train'),
+        ('LGB_V1_Removable', 'd_res_v1', 'smap_star_v1', 'assimilable_v1', 'under_wlt_v1'),
+        ('LGB_V2_Rem_ContextRep', 'd_res_v2', 'smap_star_v2', 'assimilable_v2', 'under_wlt_v2'),
+        ('LGB_V3_Rem_AllContext', 'd_res_v3', 'smap_star_v3', 'assimilable_v3', 'under_wlt_v3'),
     ]
     
     metrics_rows = []
-    # 1. Specific assimilable population
-    for name, d_col, assim_col, wlt_col in models:
-        sub = df_2019[df_2019[assim_col]].copy()
-        d_vals = sub[d_col].values
-        n_assim = len(sub)
-        n_wlt = int(df_2019[wlt_col].sum())
-        
-        bias = float(np.mean(d_vals))
-        rmse = float(np.sqrt(np.mean(d_vals ** 2)))
-        ubrmse = float(np.sqrt(np.var(d_vals)))
-        
-        # Pearson r with OL SSM
-        ol_vals = sub['ssm_ol_daily'].values
-        sm_star = sub[d_col].values + ol_vals
-        r_val, _ = pearsonr(sm_star, ol_vals) if len(sub) > 1 else (np.nan, np.nan)
-        
-        # GMIA contrast: Clay Loam JJA >30% vs 0%
-        sub_cl_jja = sub[(sub['texture_name'] == 'Clay Loam') & (sub['season'] == 'JJA')]
-        cl_gt30 = sub_cl_jja[sub_cl_jja['gmia_class'] == '>30%'][d_col]
-        cl_0 = sub_cl_jja[sub_cl_jja['gmia_class'] == '0%'][d_col]
-        gmia_contrast = float(cl_gt30.mean() - cl_0.mean()) if (len(cl_gt30) > 0 and len(cl_0) > 0) else np.nan
-        
-        metrics_rows.append({
-            'evaluation_population': 'Specific_Assimilable',
-            'model': name,
-            'n_assimilable': n_assim,
-            'assimilable_pct': n_assim / n_base_qc * 100.0,
-            'wilt_rejections': n_wlt,
-            'wilt_rejection_pct': n_wlt / n_base_qc * 100.0,
-            'bias': bias,
-            'rmse': rmse,
-            'ubrmse': ubrmse,
-            'pearson_r': r_val,
-            'gmia_contrast_cl_jja': gmia_contrast
-        })
-        
-    # Add RF comparison row
-    rf_bias, rf_rmse, rf_ubrmse, rf_r, rf_wlt_pct = rf_stats
-    metrics_rows.append({
-        'evaluation_population': 'Specific_Assimilable',
-        'model': 'RF_Comparison_Phase2b',
-        'n_assimilable': int(n_base_qc * (1.0 - rf_wlt_pct / 100.0)) if not np.isnan(rf_wlt_pct) else np.nan,
-        'assimilable_pct': (100.0 - rf_wlt_pct) if not np.isnan(rf_wlt_pct) else np.nan,
-        'wilt_rejections': int(n_base_qc * rf_wlt_pct / 100.0) if not np.isnan(rf_wlt_pct) else np.nan,
-        'wilt_rejection_pct': rf_wlt_pct,
-        'bias': rf_bias,
-        'rmse': rf_rmse,
-        'ubrmse': rf_ubrmse,
-        'pearson_r': rf_r,
-        'gmia_contrast_cl_jja': np.nan
-    })
-    
-    # 2. Common assimilable population
-    sub_com = df_2019[df_2019['assimilable_common']].copy()
-    n_common = len(sub_com)
-    for name, d_col, _, _ in models:
-        d_vals = sub_com[d_col].values
-        bias = float(np.mean(d_vals))
-        rmse = float(np.sqrt(np.mean(d_vals ** 2)))
-        ubrmse = float(np.sqrt(np.var(d_vals)))
-        
-        ol_vals = sub_com['ssm_ol_daily'].values
-        sm_star = sub_com[d_col].values + ol_vals
-        r_val, _ = pearsonr(sm_star, ol_vals)
-        
-        sub_cl_jja = sub_com[(sub_com['texture_name'] == 'Clay Loam') & (sub_com['season'] == 'JJA')]
-        cl_gt30 = sub_cl_jja[sub_cl_jja['gmia_class'] == '>30%'][d_col]
-        cl_0 = sub_cl_jja[sub_cl_jja['gmia_class'] == '0%'][d_col]
-        gmia_contrast = float(cl_gt30.mean() - cl_0.mean()) if (len(cl_gt30) > 0 and len(cl_0) > 0) else np.nan
-        
-        metrics_rows.append({
-            'evaluation_population': 'Common_Assimilable',
-            'model': name,
-            'n_assimilable': n_common,
-            'assimilable_pct': n_common / n_base_qc * 100.0,
-            'wilt_rejections': 0,
-            'wilt_rejection_pct': 0.0,
-            'bias': bias,
-            'rmse': rmse,
-            'ubrmse': ubrmse,
-            'pearson_r': r_val,
-            'gmia_contrast_cl_jja': gmia_contrast
-        })
-        
+    for pop_name, pop_col in [('Specific_Assimilable', None), ('Common_Assimilable', 'assimilable_common')]:
+        for name, d_col, star_col, assim_col, wlt_col in models:
+            if pop_col is None:
+                sub = df_2019[df_2019[assim_col]].copy()
+                n_wlt = int(df_2019[wlt_col].sum())
+            else:
+                sub = df_2019[df_2019[pop_col]].copy()
+                n_wlt = 0
+                
+            n_assim = len(sub)
+            d_vals = sub[d_col].values
+            bias = float(np.mean(d_vals))
+            rmse = float(np.sqrt(np.mean(d_vals ** 2)))
+            ubrmse = float(np.sqrt(np.var(d_vals)))
+            
+            # Correlation r_smapstar_vs_ol
+            ol_vals = sub['ssm_ol_daily'].values
+            star_vals = sub[star_col].values
+            r_ol = float(np.corrcoef(star_vals, ol_vals)[0, 1]) if len(sub) > 1 else np.nan
+            
+            # Anomaly correlation with raw SMAP (monthly pixel mean removed)
+            anom_raw = (sub['smap_sm'] - sub.groupby(['pixel_id', 'month'])['smap_sm'].transform('mean')).values
+            anom_star = (sub[star_col] - sub.groupby(['pixel_id', 'month'])[star_col].transform('mean')).values
+            valid_a = ~(np.isnan(anom_raw) | np.isnan(anom_star))
+            r_anom = float(np.corrcoef(anom_raw[valid_a], anom_star[valid_a])[0, 1]) if valid_a.sum() > 10 else np.nan
+            
+            # GMIA contrast with bootstrap on blocks
+            contrast, ci_low, ci_high, n_px_gt30, n_px_0, n_blocks_gt30, n_blocks_0, status = compute_gmia_contrast_bootstrap(sub, d_col)
+            
+            metrics_rows.append({
+                'evaluation_population': pop_name,
+                'model': name,
+                'n_assimilable': n_assim,
+                'assimilable_pct': n_assim / n_base_qc * 100.0,
+                'wilt_rejections': n_wlt,
+                'wilt_rejection_pct': n_wlt / n_base_qc * 100.0,
+                'bias': bias,
+                'rmse': rmse,
+                'ubrmse': ubrmse,
+                'r_smapstar_vs_ol': r_ol,
+                'r_anom_with_smap_raw': r_anom,
+                'gmia_contrast_cl_jja': contrast,
+                'gmia_contrast_ci_low': ci_low,
+                'gmia_contrast_ci_high': ci_high,
+                'n_px_gt30': n_px_gt30,
+                'n_px_0': n_px_0,
+                'n_blocks_gt30': n_blocks_gt30,
+                'n_blocks_0': n_blocks_0,
+                'contrast_status': status
+            })
+            
     df_metrics = pd.DataFrame(metrics_rows)
     csv_metrics = os.path.join(REPORTS_DIR, "phase2c_lgb_metrics.csv")
     df_metrics.to_csv(csv_metrics, index=False)
     print(f"Saved: {csv_metrics}")
     
-    return df_seasonal, df_metrics, n_common
+    # 3. Seasonal metrics table for each reference
+    seasonal_metrics_rows = []
+    for pop_name, pop_col in [('Specific_Assimilable', None), ('Common_Assimilable', 'assimilable_common')]:
+        for name, d_col, star_col, assim_col, wlt_col in models:
+            for s in seasons:
+                df_s = df_2019 if s == 'Annual' else df_2019[df_2019['season'] == s]
+                n_s_qc = len(df_s)
+                
+                if pop_col is None:
+                    sub_s = df_s[df_s[assim_col]].copy()
+                    n_wlt_s = int(df_s[wlt_col].sum())
+                else:
+                    sub_s = df_s[df_s[pop_col]].copy()
+                    n_wlt_s = 0
+                    
+                n_assim_s = len(sub_s)
+                d_vals_s = sub_s[d_col].values
+                bias_s = float(np.mean(d_vals_s)) if n_assim_s > 0 else np.nan
+                rmse_s = float(np.sqrt(np.mean(d_vals_s ** 2))) if n_assim_s > 0 else np.nan
+                ubrmse_s = float(np.sqrt(np.var(d_vals_s))) if n_assim_s > 0 else np.nan
+                
+                ol_vals_s = sub_s['ssm_ol_daily'].values
+                star_vals_s = sub_s[star_col].values
+                r_ol_s = float(np.corrcoef(star_vals_s, ol_vals_s)[0, 1]) if n_assim_s > 1 else np.nan
+                
+                anom_raw_s = (sub_s['smap_sm'] - sub_s.groupby(['pixel_id', 'month'])['smap_sm'].transform('mean')).values
+                anom_star_s = (sub_s[star_col] - sub_s.groupby(['pixel_id', 'month'])[star_col].transform('mean')).values
+                valid_as = ~(np.isnan(anom_raw_s) | np.isnan(anom_star_s))
+                r_anom_s = float(np.corrcoef(anom_raw_s[valid_as], anom_star_s[valid_as])[0, 1]) if valid_as.sum() > 10 else np.nan
+                
+                seasonal_metrics_rows.append({
+                    'evaluation_population': pop_name,
+                    'model': name,
+                    'season': s,
+                    'n_eval_qc': n_s_qc,
+                    'n_assimilable': n_assim_s,
+                    'assimilable_pct': n_assim_s / n_s_qc * 100.0,
+                    'wilt_rejections': n_wlt_s,
+                    'wilt_rejection_pct': n_wlt_s / n_s_qc * 100.0,
+                    'bias': bias_s,
+                    'rmse': rmse_s,
+                    'ubrmse': ubrmse_s,
+                    'r_smapstar_vs_ol': r_ol_s,
+                    'r_anom_with_smap_raw': r_anom_s
+                })
+                
+    df_seas_metrics = pd.DataFrame(seasonal_metrics_rows)
+    csv_seas_metrics = os.path.join(REPORTS_DIR, "phase2c_lgb_seasonal_metrics.csv")
+    df_seas_metrics.to_csv(csv_seas_metrics, index=False)
+    print(f"Saved: {csv_seas_metrics}")
+    
+    n_common = int(df_2019['assimilable_common'].sum())
+    return df_seasonal, df_metrics, df_seas_metrics, n_common
 
 
 def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removable, cols_retained,
                      cols_context_rep, cols_context_proc, df_ranks, df_stability, df_group_stab,
-                     matrix_spearman, top15_features):
-    """Generate publication figures in French and English with zero interpretive text."""
+                     matrix_spearman, top15_features, dom_soil, landmask):
+    """Generate publication figures in French and English with zero interpretive text and dynamic legends."""
     print("--- Generating Publication Figures (FR & EN, Zero Interpretation) ---")
     os.makedirs(FIG_DIR, exist_ok=True)
     os.makedirs(FIG_EN_DIR, exist_ok=True)
@@ -830,7 +907,6 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     idx_ctx_rep = [feature_cols.index(c) for c in cols_context_rep]
     idx_ctx_proc = [feature_cols.index(c) for c in cols_context_proc]
     
-    # Sum of absolute SHAP per group across 2019 observations
     mean_abs_rem = float(np.mean(np.abs(shap_2019[:, idx_rem].sum(axis=1))))
     mean_abs_ret = float(np.mean(np.abs(shap_2019[:, idx_ret].sum(axis=1))))
     mean_abs_ctx_rep = float(np.mean(np.abs(shap_2019[:, idx_ctx_rep].sum(axis=1))))
@@ -851,7 +927,7 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         plt.grid(axis='y', linestyle='--', alpha=0.5)
         for bar in bars:
             yval = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2.0, yval + 0.0008, f"{yval:.4f}", ha='center', va='bottom', fontsize=10, fontweight='bold')
+            plt.text(bar.get_x() + bar.get_width()/2.0, yval + (max(values)*0.01), f"{yval:.4f}", ha='center', va='bottom', fontsize=10, fontweight='bold')
         plt.ylim(0, max(values) * 1.15)
         out_path = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
         plt.savefig(out_path, dpi=300, bbox_inches='tight')
@@ -882,7 +958,7 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         print(f"Saved: {out_path}")
 
     # -------------------------------------------------------------
-    # Figure F9: Cross-Fold Stability (Heatmap + Group/Intra-Group Summary)
+    # Figure F9: Cross-Fold Stability (Heatmap + Bar plot of mean Spearman rho)
     # -------------------------------------------------------------
     mean_rho_grp = float(df_stability['spearman_r_groups'].mean())
     mean_rho_rem = float(df_stability['spearman_intra_removable'].mean())
@@ -917,7 +993,6 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     for lang, fname in [('fr', 'F9_shap_fold_stability.png'), ('en', 'F9_shap_fold_stability_en.png')]:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5), gridspec_kw={'width_ratios': [1.0, 1.3]})
         
-        # Panel (a): 5x5 heatmap of fold pairs for Top 15 features
         labels = [f"Pli {i}" if lang == 'fr' else f"Fold {i}" for i in range(5)]
         sns.heatmap(matrix_spearman, annot=True, fmt=".3f", cmap="Blues",
                     xticklabels=labels, yticklabels=labels, vmin=0.8, vmax=1.0,
@@ -925,13 +1000,12 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
                     ax=ax1)
         ax1.set_title("(a) Matrice de corrélation (Top 15)" if lang == 'fr' else "(a) Correlation matrix (Top 15)", fontsize=11, fontweight='bold')
         
-        # Panel (b): Bar plot of mean Spearman rho across all aggregation levels
         bars = ax2.barh(y_pos, rhos, color=colors_bar, height=0.6, edgecolor='black', linewidth=0.7)
         ax2.set_yticks(y_pos)
         ax2.set_yticklabels(cat_names_fr if lang == 'fr' else cat_names_en, fontsize=10)
         ax2.invert_yaxis()
         ax2.set_xlim(0.7, 1.03)
-        ax2.set_xlabel("Corrélation de rang moyenne (Spearman)" if lang == "fr" else "Mean Spearman rank correlation", fontsize=11)
+        ax2.set_xlabel("Corrélation de rang moyenne (Spearman)" if lang == 'fr' else "Mean Spearman rank correlation", fontsize=11)
         ax2.set_title("(b) Stabilité à travers les 10 paires de plis" if lang == 'fr' else "(b) Stability across 10 fold pairs", fontsize=11, fontweight='bold')
         ax2.grid(axis='x', linestyle='--', alpha=0.5)
         for bar in bars:
@@ -945,7 +1019,7 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         print(f"Saved: {out_path}")
 
     # -------------------------------------------------------------
-    # Figure F10: Seasonal Maps (V1, V2, V3, B2-train) + roughness_is_nan
+    # Figure F10: Seasonal Maps (V1, V2, V3, B2-train) + roughness_is_nan + dominant_soiltype
     # -------------------------------------------------------------
     seasons_order = ['DJF', 'MAM', 'JJA', 'SON']
     variants_fr = [
@@ -961,7 +1035,7 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         ('B2-train (CDF Matching)', 'applied_corr_b2_train')
     ]
     
-    # Compute 2nd - 98th percentile symmetric color scale across ALL 16 seasonal maps
+    # Color scale fixed to 2nd-98th percentiles across all 16 maps
     all_maps_data = []
     for _, col_name in variants_fr:
         for s in seasons_order:
@@ -975,23 +1049,62 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     vmin, vmax = -vlim, vlim
     print(f"F10 color scale fixed to 2-98th percentiles: [{vmin:+.4f}, {vmax:+.4f}] m3/m3")
     
-    # Grid of roughness_is_nan
+    # 1. Grid of roughness_is_nan
     grid_nan = np.full((121, 181), np.nan, dtype=np.float32)
     rough_nan_px = df_2019.groupby('pixel_id')['roughness_is_nan'].first()
     grid_nan[rough_nan_px.index // 181, rough_nan_px.index % 181] = rough_nan_px.values
     cmap_nan = mcolors.ListedColormap(['#e0e0e0', '#d62728'])
+    
+    # Dynamic percentages for roughness
+    n_valid_px = int((grid_nan == 0.0).sum())
+    n_nan_px = int((grid_nan == 1.0).sum())
+    total_r_px = n_valid_px + n_nan_px
+    pct_nan_px = float(n_nan_px / total_r_px * 100.0) if total_r_px > 0 else 0.0
+    pct_val_px = 100.0 - pct_nan_px
+
+    # 2. Grid of dominant soil texture (Noah-MP)
+    grid_soil = np.full((121, 181), np.nan, dtype=np.float32)
+    soil_active_codes = [1, 3, 4, 6, 7, 9, 12]
+    soil_code_to_idx = {c: i for i, c in enumerate(soil_active_codes)}
+    
+    for r in range(121):
+        for c in range(181):
+            if landmask[r, c] == 1:
+                st = dom_soil[r, c]
+                if st in soil_code_to_idx:
+                    grid_soil[r, c] = soil_code_to_idx[st]
+                    
+    soil_colors = ["#f4d03f", "#eb984e", "#a569bd", "#5dade2", "#48c9b0", "#e67e22", "#c0392b"]
+    cmap_soil = mcolors.ListedColormap(soil_colors)
+    
+    # Dynamic percentages for each soil class
+    total_land_px = int((landmask == 1).sum())
+    soil_pcts = {}
+    for c in soil_active_codes:
+        c_cnt = int(((dom_soil == c) & (landmask == 1)).sum())
+        soil_pcts[c] = float(c_cnt / total_land_px * 100.0) if total_land_px > 0 else 0.0
+
+    soil_names_fr = {
+        1: "Sable (1)", 3: "Loam sableux (3)", 4: "Loam limoneux (4)",
+        6: "Loam (6)", 7: "Loam argilo-sableux (7)", 9: "Loam argileux (9)", 12: "Argile (12)"
+    }
+    soil_names_en = {
+        1: "Sand (1)", 3: "Sandy Loam (3)", 4: "Silt Loam (4)",
+        6: "Loam (6)", 7: "Sandy Clay Loam (7)", 9: "Clay Loam (9)", 12: "Clay (12)"
+    }
 
     # Standalone roughness_is_nan figure
     for lang, fname in [('fr', 'F10_roughness_is_nan.png'), ('en', 'F10_roughness_is_nan_en.png')]:
         fig_nan, ax_n = plt.subplots(figsize=(7, 5))
-        im_n = ax_n.imshow(grid_nan, origin='lower', cmap=cmap_nan, extent=[-10.0, -1.0, 30.0, 36.0])
+        ax_n.imshow(grid_nan, origin='lower', cmap=cmap_nan, extent=[-10.0, -1.0, 30.0, 36.0])
         ax_n.set_xlabel("Longitude (°E)", fontsize=10)
         ax_n.set_ylabel("Latitude (°N)", fontsize=10)
         ax_n.set_title("Masque spatial de rugosité manquante (roughness_is_nan)" if lang == 'fr' else "Spatial mask of missing roughness (roughness_is_nan)", fontsize=11, fontweight='bold')
         
-        # Legend patches
-        patch_val = mpatches.Patch(color='#e0e0e0', label='Rugosité valide (85%)' if lang == 'fr' else 'Valid roughness (85%)')
-        patch_nan = mpatches.Patch(color='#d62728', label='Rugosité manquante / NaN (15%)' if lang == 'fr' else 'Missing roughness / NaN (15%)')
+        lbl_v = f"Rugosité valide ({pct_val_px:.1f} %)" if lang == 'fr' else f"Valid roughness ({pct_val_px:.1f}%)"
+        lbl_m = f"Rugosité manquante ({pct_nan_px:.1f} %)" if lang == 'fr' else f"Missing roughness ({pct_nan_px:.1f}%)"
+        patch_val = mpatches.Patch(color='#e0e0e0', label=lbl_v)
+        patch_nan = mpatches.Patch(color='#d62728', label=lbl_m)
         ax_n.legend(handles=[patch_val, patch_nan], loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
         
         out_n = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
@@ -999,13 +1112,34 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
         plt.close(fig_nan)
         print(f"Saved: {out_n}")
 
-    # Full F10 multi-panel figure (4 rows x 6 cols: 4 seasons, 1 roughness panel, 1 colorbar)
+    # Standalone dominant soil texture figure
+    for lang, fname in [('fr', 'F10_dominant_soiltype.png'), ('en', 'F10_dominant_soiltype_en.png')]:
+        fig_s, ax_s = plt.subplots(figsize=(7, 5))
+        ax_s.imshow(grid_soil, origin='lower', cmap=cmap_soil, vmin=-0.5, vmax=6.5, extent=[-10.0, -1.0, 30.0, 36.0])
+        ax_s.set_xlabel("Longitude (°E)", fontsize=10)
+        ax_s.set_ylabel("Latitude (°N)", fontsize=10)
+        ax_s.set_title("Texture dominante du sol (Noah-MP)" if lang == 'fr' else "Noah-MP dominant soil texture", fontsize=11, fontweight='bold')
+        
+        s_names = soil_names_fr if lang == 'fr' else soil_names_en
+        s_patches = [
+            mpatches.Patch(color=soil_colors[i], label=f"{s_names[c]} ({soil_pcts[c]:.1f} %)" if lang == 'fr' else f"{s_names[c]} ({soil_pcts[c]:.1f}%)")
+            for i, c in enumerate(soil_active_codes)
+        ]
+        ax_s.legend(handles=s_patches, loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=8)
+        
+        out_s = os.path.join(FIG_DIR if lang == 'fr' else FIG_EN_DIR, fname)
+        fig_s.savefig(out_s, dpi=300, bbox_inches='tight')
+        plt.close(fig_s)
+        print(f"Saved: {out_s}")
+
+    # Full F10 multi-panel figure: 4 rows x 7 cols
+    # (Cols 0-3: seasons, Col 4: roughness_is_nan, Col 5: dominant_soiltype, Col 6: colorbar)
     for lang, variants, fname in [
         ('fr', variants_fr, 'F10_seasonal_applied_corrections_v1_v2_v3.png'),
         ('en', variants_en, 'F10_seasonal_applied_corrections_v1_v2_v3_en.png')
     ]:
-        fig = plt.figure(figsize=(19, 12))
-        gs = fig.add_gridspec(4, 6, width_ratios=[1, 1, 1, 1, 1.1, 0.07], wspace=0.04, hspace=0.06)
+        fig = plt.figure(figsize=(22, 12))
+        gs = fig.add_gridspec(4, 7, width_ratios=[1, 1, 1, 1, 1.05, 1.05, 0.07], wspace=0.04, hspace=0.06)
         
         # 16 seasonal maps
         for row_idx, (v_label, col_name) in enumerate(variants):
@@ -1031,18 +1165,33 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
                 else:
                     ax.set_xticklabels([])
                     
-        # Dedicated roughness_is_nan panel spanning rows 1-2 right next to V2/V3 JJA/SON
+        # Col 4: roughness_is_nan panel (spanning rows 1-2, right next to JJA/SON of V2/V3)
         ax_nan = fig.add_subplot(gs[1:3, 4])
         ax_nan.imshow(grid_nan, origin='lower', cmap=cmap_nan, extent=[-10.0, -1.0, 30.0, 36.0])
         ax_nan.set_title("Masque roughness_is_nan\n(Zones sans rugosité)" if lang == 'fr' else "roughness_is_nan mask\n(Missing roughness zones)", fontsize=10, fontweight='bold')
         ax_nan.set_xlabel("Longitude (°E)", fontsize=9)
         ax_nan.set_ylabel("Latitude (°N)", fontsize=9)
-        patch_val = mpatches.Patch(color='#e0e0e0', label='Valide (85%)' if lang == 'fr' else 'Valid (85%)')
-        patch_nan = mpatches.Patch(color='#d62728', label='NaN (15%)' if lang == 'fr' else 'NaN (15%)')
-        ax_nan.legend(handles=[patch_val, patch_nan], loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=8)
+        lbl_v = f"Valide ({pct_val_px:.1f} %)" if lang == 'fr' else f"Valid ({pct_val_px:.1f}%)"
+        lbl_m = f"NaN ({pct_nan_px:.1f} %)" if lang == 'fr' else f"NaN ({pct_nan_px:.1f}%)"
+        p_val = mpatches.Patch(color='#e0e0e0', label=lbl_v)
+        p_nan = mpatches.Patch(color='#d62728', label=lbl_m)
+        ax_nan.legend(handles=[p_val, p_nan], loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=8)
         
-        # Colorbar
-        cax = fig.add_subplot(gs[:, 5])
+        # Col 5: dominant soil texture panel (spanning rows 1-2, right next to roughness_is_nan with identical dimensions)
+        ax_tex = fig.add_subplot(gs[1:3, 5])
+        ax_tex.imshow(grid_soil, origin='lower', cmap=cmap_soil, vmin=-0.5, vmax=6.5, extent=[-10.0, -1.0, 30.0, 36.0])
+        ax_tex.set_title("Texture sol Noah-MP\n(7 classes de sol)" if lang == 'fr' else "Noah-MP dominant soil\n(7 soil classes)", fontsize=10, fontweight='bold')
+        ax_tex.set_xlabel("Longitude (°E)", fontsize=9)
+        ax_tex.set_yticklabels([])
+        s_names = soil_names_fr if lang == 'fr' else soil_names_en
+        s_patches = [
+            mpatches.Patch(color=soil_colors[i], label=f"{s_names[c]} ({soil_pcts[c]:.1f} %)" if lang == 'fr' else f"{s_names[c]} ({soil_pcts[c]:.1f}%)")
+            for i, c in enumerate(soil_active_codes)
+        ]
+        ax_tex.legend(handles=s_patches, loc='lower right', frameon=True, facecolor='white', framealpha=0.9, fontsize=7)
+        
+        # Col 6: Vertical colorbar
+        cax = fig.add_subplot(gs[:, 6])
         cbar = fig.colorbar(im, cax=cax)
         cbar.set_label(
             r"Correction moyenne appliquée $\overline{\Delta \mathrm{SMAP}}$ (m$^3$/m$^3$)" if lang == 'fr' else
@@ -1058,26 +1207,31 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
     ide_art_dir = "/home/mohammad.elaabaribao/.gemini/antigravity-ide/brain/a99d4e7d-be16-47d8-8e23-261668b8ac00/figures"
     os.makedirs(os.path.join(ide_art_dir, "en"), exist_ok=True)
     import shutil
-    for fn in ['F7_shap_group_importance.png', 'F8_shap_beeswarm_top15.png', 'F9_shap_fold_stability.png',
-               'F10_seasonal_applied_corrections_v1_v2_v3.png', 'F10_roughness_is_nan.png']:
+    fig_names = [
+        'F7_shap_group_importance.png', 'F8_shap_beeswarm_top15.png', 'F9_shap_fold_stability.png',
+        'F10_seasonal_applied_corrections_v1_v2_v3.png', 'F10_roughness_is_nan.png', 'F10_dominant_soiltype.png'
+    ]
+    for fn in fig_names:
         shutil.copy(os.path.join(FIG_DIR, fn), os.path.join(ide_art_dir, fn))
-    for fn in ['F7_shap_group_importance_en.png', 'F8_shap_beeswarm_top15_en.png', 'F9_shap_fold_stability_en.png',
-               'F10_seasonal_applied_corrections_v1_v2_v3_en.png', 'F10_roughness_is_nan_en.png']:
-        shutil.copy(os.path.join(FIG_EN_DIR, fn), os.path.join(ide_art_dir, "en", fn))
+    for fn in fig_names:
+        en_fn = fn.replace('.png', '_en.png')
+        if os.path.exists(os.path.join(FIG_EN_DIR, en_fn)):
+            shutil.copy(os.path.join(FIG_EN_DIR, en_fn), os.path.join(ide_art_dir, "en", en_fn))
     print("Copied all Phase 2c figures to IDE artifact directory.")
 
 
-def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics,
+def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics, df_seas_metrics,
                              n_total_2019, n_base_qc, n_common, phi_0):
     """Generate Markdown report for Phase 2c with ZERO hardcoded numbers and ZERO banned phrases."""
     print("--- Generating Phase 2c LightGBM Markdown Report ---")
     out_md = os.path.join(REPORTS_DIR, "phase2c_lgb_report.md")
     
-    # Raw LaTeX definitions without f-string backslashes
     latex_v1 = r"$\mathrm{SMAP}^*_{\mathrm{V1}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \phi_0)$"
     latex_v2 = r"$\mathrm{SMAP}^*_{\mathrm{V2}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \Phi_{\mathrm{context\_rep}} + \phi_0)$"
     latex_v3 = r"$\mathrm{SMAP}^*_{\mathrm{V3}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \Phi_{\mathrm{context\_rep}} + \Phi_{\mathrm{context\_proc}} + \phi_0)$"
     latex_dres = r"$d_{\mathrm{res}} = \mathrm{SMAP}^* - \mathrm{SSM}_{\mathrm{OL}}$"
+    latex_theta = r"$	heta$"
+    latex_rho = r"$\rho$"
     latex_wlt = r"$\mathrm{SMAP}^* \ge \theta_{\mathrm{wlt}} + 0{,}02$"
     
     # 1. Spatial CV Table
@@ -1143,18 +1297,37 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_se
         sub = df_metrics[df_metrics['evaluation_population'] == pop_name]
         rows = []
         for _, r in sub.iterrows():
-            contrast_str = f"{r['gmia_contrast_cl_jja']:+.4f}" if not np.isnan(r['gmia_contrast_cl_jja']) else "N/A"
-            r_str = f"{r['pearson_r']:.4f}" if not np.isnan(r['pearson_r']) else "N/A"
+            if not np.isnan(r['gmia_contrast_ci_low']):
+                ci_str = f"[{r['gmia_contrast_ci_low']:+.4f}, {r['gmia_contrast_ci_high']:+.4f}]"
+            else:
+                ci_str = "[N/A]"
+            contrast_str = f"{r['gmia_contrast_cl_jja']:+.4f} {ci_str} ({r['contrast_status']})" if not np.isnan(r['gmia_contrast_cl_jja']) else f"N/A ({r['contrast_status']})"
+            r_ol_str = f"{r['r_smapstar_vs_ol']:.4f}" if not np.isnan(r['r_smapstar_vs_ol']) else "N/A"
+            r_anom_str = f"{r['r_anom_with_smap_raw']:.4f}" if not np.isnan(r['r_anom_with_smap_raw']) else "N/A"
             rows.append(
                 f"| {r['model']} | {int(r['n_assimilable']):,} ({r['assimilable_pct']:.1f}%) | "
                 f"{int(r['wilt_rejections']):,} ({r['wilt_rejection_pct']:.1f}%) | "
                 f"{r['bias']:+.4f} m³/m³ | {r['rmse']:.4f} m³/m³ | {r['ubrmse']:.4f} m³/m³ | "
-                f"{r_str} | {contrast_str} m³/m³ |"
+                f"{r_ol_str} | {r_anom_str} | {contrast_str} |"
             )
         return chr(10).join(rows)
         
     table_spec = make_metrics_table('Specific_Assimilable')
     table_comm = make_metrics_table('Common_Assimilable')
+    
+    # 7. Seasonal Stratified Metrics Table (Specific Assimilable)
+    sub_sm = df_seas_metrics[df_seas_metrics['evaluation_population'] == 'Specific_Assimilable']
+    sm_rows = []
+    for _, r in sub_sm.iterrows():
+        r_ol_s = f"{r['r_smapstar_vs_ol']:.4f}" if not np.isnan(r['r_smapstar_vs_ol']) else "N/A"
+        r_anom_s = f"{r['r_anom_with_smap_raw']:.4f}" if not np.isnan(r['r_anom_with_smap_raw']) else "N/A"
+        sm_rows.append(
+            f"| {r['model']} | {r['season']} | {int(r['n_assimilable']):,} ({r['assimilable_pct']:.1f}%) | "
+            f"{int(r['wilt_rejections']):,} ({r['wilt_rejection_pct']:.1f}%) | "
+            f"{r['bias']:+.4f} m³/m³ | {r['rmse']:.4f} m³/m³ | {r['ubrmse']:.4f} m³/m³ | "
+            f"{r_ol_s} | {r_anom_s} |"
+        )
+    table_seas_metrics = chr(10).join(sm_rows)
     
     report_text = f"""# Rapport de Phase 2c : Correction Attribuable LightGBM et TreeSHAP Exact
 
@@ -1208,7 +1381,7 @@ Validation sur blocs spatiaux disjoints de 1° avec calcul du TreeSHAP exact sur
 
 ### 3.3 Matrice de corrélation de Spearman entre plis
 
-| Paire de plis | Spearman $\\rho$ (4 Groupes) | Spearman $\\rho$ (Top 15) | Spearman $\\rho$ (Toutes les 66 variables) |
+| Paire de plis | Spearman {latex_rho} (4 Groupes) | Spearman {latex_rho} (Top 15) | Spearman {latex_rho} (Toutes les 66 variables) |
 | :--- | :--- | :--- | :--- |
 {stab_table}
 | **Moyenne** | **{mean_rho_groups:.4f}** | **{mean_rho_top15:.4f}** | **{mean_rho_all:.4f}** |
@@ -1230,21 +1403,27 @@ Les 3 variantes de correction appliquent la décomposition additive :
 
 ---
 
-## 5. Protocole 2a complet : Comparaison avec B0, B1, B2, B2-train et RF
+## 5. Protocole 2a complet : Comparaison avec B0, B1, B2 et B2-train
 
 Le flétrissement ({latex_wlt}) est recalculé sur l'observation corrigée pour chaque référence.
 
 ### 5.1 Échantillon assimilable spécifique à chaque référence
 
-| Référence | Observations assimilables | Rejets flétrissement | Biais ({latex_dres}) | RMSE | ubRMSE | Pearson $r$ | Contraste GMIA Clay Loam JJA |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Référence | Observations assimilables | Rejets flétrissement | Biais ({latex_dres}) | RMSE | ubRMSE | $r_{{\mathrm{{SMAP}}^* \mathrm{{vs}} \mathrm{{OL}}}}$ | $r_{{\mathrm{{anom}}}}$ (SMAP brut) | Contraste GMIA Clay Loam JJA |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 {table_spec}
 
 ### 5.2 Échantillon commun ({n_common:,} observations assimilables par toutes les références)
 
-| Référence | Observations assimilables | Rejets flétrissement | Biais ({latex_dres}) | RMSE | ubRMSE | Pearson $r$ | Contraste GMIA Clay Loam JJA |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Référence | Observations assimilables | Rejets flétrissement | Biais ({latex_dres}) | RMSE | ubRMSE | $r_{{\mathrm{{SMAP}}^* \mathrm{{vs}} \mathrm{{OL}}}}$ | $r_{{\mathrm{{anom}}}}$ (SMAP brut) | Contraste GMIA Clay Loam JJA |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 {table_comm}
+
+### 5.3 Stratification saisonnière des métriques (Échantillon spécifique)
+
+| Référence | Saison | Observations assimilables | Rejets flétrissement | Biais ({latex_dres}) | RMSE | ubRMSE | $r_{{\mathrm{{SMAP}}^* \mathrm{{vs}} \mathrm{{OL}}}}$ | $r_{{\mathrm{{anom}}}}$ (SMAP brut) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+{table_seas_metrics}
 
 ---
 
@@ -1255,6 +1434,7 @@ Le flétrissement ({latex_wlt}) est recalculé sur l'observation corrigée pour 
 - **Stabilité des rangs entre plis :** [F9_shap_fold_stability.png](file://{os.path.join(FIG_DIR, "F9_shap_fold_stability.png")}) | EN: [F9_shap_fold_stability_en.png](file://{os.path.join(FIG_EN_DIR, "F9_shap_fold_stability_en.png")})
 - **Cartes saisonnières de correction moyenne (V1, V2, V3, B2-train) :** [F10_seasonal_applied_corrections_v1_v2_v3.png](file://{os.path.join(FIG_DIR, "F10_seasonal_applied_corrections_v1_v2_v3.png")}) | EN: [F10_seasonal_applied_corrections_v1_v2_v3_en.png](file://{os.path.join(FIG_EN_DIR, "F10_seasonal_applied_corrections_v1_v2_v3_en.png")})
 - **Carte spatiale du masque de rugosité manquante :** [F10_roughness_is_nan.png](file://{os.path.join(FIG_DIR, "F10_roughness_is_nan.png")}) | EN: [F10_roughness_is_nan_en.png](file://{os.path.join(FIG_EN_DIR, "F10_roughness_is_nan_en.png")})
+- **Carte spatiale de la texture dominante Noah-MP :** [F10_dominant_soiltype.png](file://{os.path.join(FIG_DIR, "F10_dominant_soiltype.png")}) | EN: [F10_dominant_soiltype_en.png](file://{os.path.join(FIG_EN_DIR, "F10_dominant_soiltype_en.png")})
 """
 
     with open(out_md, 'w', encoding='utf-8') as f:
@@ -1291,35 +1471,30 @@ def main():
     lut_b2 = np.load(LUT_CACHE_FILE) if os.path.exists(LUT_CACHE_FILE) else None
     lut_b2_train = load_or_build_b2_train_lut(landmask)
     
-    # Climatology B1 learned on 2016-2018 train
-    p_tr = train_df['pixel_id'].values
-    m_tr = train_df['month'].values
-    d_tr = train_df['target_d'].values
-    clim_df = pd.DataFrame({'pixel_id': p_tr, 'month': m_tr, 'target_d': d_tr})
-    climatology = clim_df.groupby(['pixel_id', 'month'])['target_d'].mean().to_dict()
-    pixel_fallback = clim_df.groupby('pixel_id')['target_d'].mean().to_dict()
-    global_fallback = float(d_tr.mean())
+    # Baseline B1 Climatology learned on ALL 2016-2018 observations passing non-wilt QC
+    climatology, pixel_fallback, global_fallback = learn_b1_climatology()
     
     # 7. Evaluate 2019 Validation Set
-    df_2019, shap_2019, X_val_2019, phi_0, n_total_2019, n_base_qc, rf_stats = evaluate_2019_validation(
+    df_2019, shap_2019, X_val_2019, phi_0, n_total_2019, n_base_qc = evaluate_2019_validation(
         model, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc,
         lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, climatology, pixel_fallback, global_fallback
     )
     
-    # 8. Compute Seasonal Corrections & Full Protocol 2a Metrics
-    df_seasonal, df_metrics, n_common = compute_seasonal_corrections_and_metrics(
-        df_2019, n_total_2019, n_base_qc, rf_stats
+    # 8. Compute Seasonal Corrections, Full Protocol 2a Metrics, and Seasonal Metrics
+    df_seasonal, df_metrics, df_seas_metrics, n_common = compute_seasonal_corrections_and_metrics(
+        df_2019, n_total_2019, n_base_qc
     )
     
-    # 9. Generate Publication Figures (FR & EN, zero interpretation)
+    # 9. Generate Publication Figures (FR & EN, zero interpretation, dynamic legends)
     generate_figures(
         df_2019, shap_2019, X_val_2019, feature_cols, cols_rem, cols_ret,
-        cols_ctx_rep, cols_ctx_proc, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features
+        cols_ctx_rep, cols_ctx_proc, df_ranks, df_stability, df_group_stab,
+        matrix_spearman, top15_features, dom_soil, landmask
     )
     
-    # 10. Generate Markdown Report
+    # 10. Generate Markdown Report directly
     generate_markdown_report(
-        df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics,
+        df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics, df_seas_metrics,
         n_total_2019, n_base_qc, n_common, phi_0
     )
     

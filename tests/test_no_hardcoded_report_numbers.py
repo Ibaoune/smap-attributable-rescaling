@@ -99,6 +99,14 @@ def test_detector_catches_hardcoded_numbers_and_interpretations():
     found_banned = [p for p in banned if p in bad_source]
     assert len(found_banned) == 2, "Detector should catch banned interpretive phrases!"
 
+    # Test detection of hardcoded percentage in figure text
+    bad_fig_line = 'ax.text(0.5, 0.5, "Rugosité manquante: 85 %")'
+    assert re.search(r'\d+\s*%', bad_fig_line) is not None, "Detector should catch hardcoded percentage in figure text!"
+
+    # Test detection of hardcoded metrics in functions
+    bad_metric_code = "rf_r = 0.7729\nreturn rf_r"
+    assert "0.7729" in bad_metric_code, "Detector should catch hardcoded metric values!"
+
 
 def test_no_hardcoded_decimal_literals_in_phase2a_bis_report_generator():
     """Verify that generate_markdown_report in scripts/08_diagnose_dynamic_irrigation.py
@@ -174,7 +182,46 @@ def test_no_hardcoded_decimal_literals_in_phase2c_report_generator():
     assert "{stab_table}" in src
     assert "{top15_table}" in src
     assert "{seas_table}" in src
+    assert "{table_seas_metrics}" in src
+    assert "{group_table}" in src
     assert "{table_spec}" in src
     assert "{table_comm}" in src
     assert "{mean_cv_rmse:.4f}" in src
     assert "{mean_rho_top15:.4f}" in src
+
+
+def test_no_hardcoded_percentages_or_decimals_in_figure_labels_and_legends():
+    """Verify that figure generation in scripts/10_train_phase2c_lightgbm.py
+    does not contain hardcoded percentage literals (e.g. '85%' or '15%') in strings.
+    """
+    script_path = os.path.join(ROOT_DIR, "scripts", "10_train_phase2c_lightgbm.py")
+    with open(script_path, "r", encoding="utf-8") as f:
+        code = f.read()
+    start = code.find("def generate_figures(")
+    end = code.find("def generate_markdown_report(", start)
+    fig_code = code[start:end]
+
+    hardcoded_pcts = []
+    for line in fig_code.splitlines():
+        line_clean = re.sub(r'\{[^}]+\}', '', line)
+        for s in re.findall(r'["\']([^"\']+)["\']', line_clean):
+            if '%' in s and any(c.isdigit() for c in s):
+                hardcoded_pcts.append(s)
+
+    assert len(hardcoded_pcts) == 0, f"Found hardcoded percentage in figure code: {hardcoded_pcts}"
+
+
+def test_no_hardcoded_metrics_in_functions():
+    """Verify that metric computation functions in scripts/10_train_phase2c_lightgbm.py
+    do not contain hardcoded metric values (like rf_r = 0.7729).
+    """
+    script_path = os.path.join(ROOT_DIR, "scripts", "10_train_phase2c_lightgbm.py")
+    with open(script_path, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    start = code.find("def evaluate_2019_validation(")
+    end = code.find("def generate_figures(", start)
+    metric_code = code[start:end]
+
+    assert "0.7729" not in metric_code, "Found hardcoded rf_r = 0.7729 in metric functions!"
+    assert "RF_Comparison_Phase2b" not in metric_code, "Found manual RF_Comparison_Phase2b row in metric functions!"
