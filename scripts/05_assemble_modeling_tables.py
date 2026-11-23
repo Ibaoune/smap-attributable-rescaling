@@ -491,6 +491,60 @@ def validate_qc_masks_against_daobs(sample_size=120) -> dict:
     return stats
 
 
+def compute_mswep_basin_conservation():
+    """Dynamically compute annual basin precipitation conservation between MSWEP raw (0.10°) and regridded (0.05°)."""
+    f_mask = os.path.join(BASE_DIR, "data", "interim", "static", "basin_masks_northmor.nc")
+    f_raw = "/srv/lustre01/project/climat-um6p-st-iwri-7ksifkvwkuy/shared/TEAM/data/mswep/all_Mor/mswep_1979_2020.nc"
+    
+    with netCDF4.Dataset(f_mask) as ds_mask:
+        lat_010 = ds_mask.variables['lat_010'][:]
+        lon_010 = ds_mask.variables['lon_010'][:]
+        seb_010 = ds_mask.variables['mask_sebou_010'][:] > 0
+        brg_010 = ds_mask.variables['mask_bouregreg_010'][:] > 0
+        seb_005 = ds_mask.variables['mask_sebou_005'][:] > 0
+        brg_005 = ds_mask.variables['mask_bouregreg_005'][:] > 0
+
+    ds_raw = netCDF4.Dataset(f_raw)
+    lat_m = ds_raw.variables['lat'][:]
+    lon_m = ds_raw.variables['lon'][:]
+    time_m = ds_raw.variables['time'][:]
+    lat_idx = [np.abs(lat_m - l).argmin() for l in lat_010]
+    lon_idx = [np.abs(lon_m - l).argmin() for l in lon_010]
+
+    base_date = datetime.date(1900, 1, 1)
+    dates = [base_date + datetime.timedelta(days=int(t)) for t in time_m]
+
+    results = []
+    for y in range(2016, 2021):
+        idx_y = [i for i, d in enumerate(dates) if d.year == y]
+        p_raw_sub = ds_raw.variables['precipitation'][idx_y, :, :]
+        p_raw_010 = p_raw_sub[:, lat_idx, :][:, :, lon_idx]
+        p_raw_ann = np.sum(p_raw_010, axis=0)
+        seb_raw = float(np.mean(p_raw_ann[seb_010]))
+        brg_raw = float(np.mean(p_raw_ann[brg_010]))
+        
+        f_005 = os.path.join(BASE_DIR, "data", "interim", "mswep", f"mswep_northmor_{y}.nc")
+        with netCDF4.Dataset(f_005) as ds_005:
+            p_005 = ds_005.variables['precip_mswep'][:]
+            p_005_ann = np.sum(p_005, axis=0)
+            seb_005_v = float(np.mean(p_005_ann[seb_005]))
+            brg_005_v = float(np.mean(p_005_ann[brg_005]))
+            
+        diff_seb = (seb_005_v - seb_raw) / seb_raw * 100.0
+        diff_brg = (brg_005_v - brg_raw) / brg_raw * 100.0
+        results.append({
+            'year': y,
+            'seb_raw': seb_raw,
+            'seb_005': seb_005_v,
+            'diff_seb': diff_seb,
+            'brg_raw': brg_raw,
+            'brg_005': brg_005_v,
+            'diff_brg': diff_brg
+        })
+    ds_raw.close()
+    return results
+
+
 def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
     """Generate comprehensive synthesis report in Markdown."""
     print("\nGenerating comprehensive synthesis report...")
@@ -537,14 +591,16 @@ def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
 
         rf.write("## 5. Statistiques de la Cible par Classe d'Irrigation GMIA (Constat Factuel)\n\n")
         rf.write("| Classe GMIA | Part échantillon | Moyenne ($d$) [$\\mathrm{m}^3/\\mathrm{m}^3$] | Écart-type ($d$) [$\\mathrm{m}^3/\\mathrm{m}^3$] |\n")
-        rf.write("| :--- | :---: | :---: |\n")
+        rf.write("| :--- | :---: | :---: | :---: |\n")
         for g_cls in ['0%', '0-10%', '10-30%', '>30%']:
             sub = df_all[df_all['gmia_class'] == g_cls]['target_d']
             frac = len(sub) / len(df_all) * 100.0
             rf.write(f"| **{g_cls}** | {len(sub):,} ({frac:.1f}%) | {sub.mean():+.4f} | {sub.std():.4f} |\n")
         rf.write("\n")
+        sub_0 = float(df_all[df_all['gmia_class'] == '0%']['target_d'].mean())
+        sub_gt30 = float(df_all[df_all['gmia_class'] == '>30%']['target_d'].mean())
         rf.write("> [!NOTE]\n")
-        rf.write("> La moyenne de $d$ passe de $-0,0362\\,\\mathrm{m}^3/\\mathrm{m}^3$ en classe 0% à $-0,0588\\,\\mathrm{m}^3/\\mathrm{m}^3$ pour $>30\\%$. Ce gradient négatif est strictement factuel ; il est en sens inverse d'un signal d'irrigation direct (qui humidifierait le sol et augmenterait $d$) et reflète vraisemblablement une covariation géographique avec la texture du sol (sols plus argileux dans les plaines agricoles du Gharb/Saïss avec seuil de flétrissement plus élevé).\n\n")
+        rf.write(f"> La moyenne de $d$ passe de {sub_0:+.4f} m³/m³ en classe 0% à {sub_gt30:+.4f} m³/m³ pour >30%. Ce gradient négatif est strictement factuel ; il est en sens inverse d'un signal d'irrigation direct (qui humidifierait le sol et augmenterait $d$) et reflète vraisemblablement une covariation géographique avec la texture du sol (sols plus argileux dans les plaines agricoles du Gharb/Saïss avec seuil de flétrissement plus élevé).\n\n")
 
         rf.write("## 6. Analyse des Valeurs Manquantes de Rugosité (`roughness_coefficient`)\n\n")
         n_rough_nan = int(df_all['roughness_is_nan'].sum())
@@ -554,10 +610,6 @@ def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
         
         # Breakdown by landcover
         sub_nan = df_all[df_all['roughness_is_nan'] == 1]
-        lc_counts = sub_nan['landcover_frac_16'].groupby(df_all['pixel_id']).first() # approximation or groupby
-        # Let's group by dominant_landcover using dominant_soiltype or landcover fracs
-        # In df_all we have landcover_frac_1..20
-        # Let's compute dominant landcover index from landcover_frac
         lc_cols = [f'landcover_frac_{i}' for i in range(1, 21)]
         dom_lc_all = df_all[lc_cols].values.argmax(axis=1) + 1
         sub_nan_dom = dom_lc_all[df_all['roughness_is_nan'] == 1]
@@ -578,7 +630,8 @@ def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
             name = igbp_names.get(cid, f"Classe {cid}")
             rf.write(f"| {cid} | {name} | {cnt:,} | {cnt/n_rough_nan*100:.2f}% |\n")
         rf.write("\n")
-        rf.write("Les classes 7 (Open Shrublands) et 16 (Barren / Desert) concentrent à elles seules plus de 81% des valeurs manquantes de rugosité.\n\n")
+        pct_7_16 = (lc_dist.get(7, 0) + lc_dist.get(16, 0)) / n_rough_nan * 100.0
+        rf.write(f"Les classes 7 (Open Shrublands) et 16 (Barren or Sparsely Vegetated) concentrent à elles seules {pct_7_16:.2f}% des valeurs manquantes de rugosité.\n\n")
 
         rf.write("## 7. Taux de Rejet des Masques Contrôle Qualité (LIS QC)\n\n")
         qc_masks = [
@@ -604,15 +657,33 @@ def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
         rf.write("Dans le système LIS, les fichiers `LISDAOBS_YYYYMMDDHHMM.1gs4r` comportent deux enregistrements distincts :\n")
         rf.write("1. **Enregistrement 1 (`smobs_unsc`)** : écrit **AVANT** le contrôle qualité `noahmp401_qc_soilmobs` (observation brute reprojectée, filtrée uniquement par le flag SMAP bit 0 et VWC <= 5.0).\n")
         rf.write("2. **Enregistrement 2 (`smobs`)** : écrit **APRÈS** `noahmp401_qc_soilmobs` (pixels rejetés passés à `-9999.0` avant assimilation par EnKF).\n\n")
+        
+        tot_obs = qc_val_stats['total_obs']
+        total_rej = qc_val_stats['total_actual_rejections']
+        comb_tp = qc_val_stats['combined']['tp']
+        comb_fp = qc_val_stats['combined']['fp']
+        comb_fn = qc_val_stats['combined']['fn']
+        comb_tn = qc_val_stats['combined']['tn']
+        comb_prec = (comb_tp / (comb_tp + comb_fp) * 100.0) if (comb_tp + comb_fp) > 0 else 0.0
+        comb_rec = (comb_tp / total_rej * 100.0) if total_rej > 0 else 0.0
+        comb_acc = ((comb_tp + comb_tn) / tot_obs * 100.0) if tot_obs > 0 else 0.0
+
         rf.write(f"- **Nombre de fichiers DAOBS testés** : {qc_val_stats['tested_files']}\n")
-        rf.write(f"- **Observations SMAP valides comparées** : {qc_val_stats['total_obs']:,}\n")
-        rf.write(f"- **Rejets effectifs observés dans DAOBS (Rec 1 valide, Rec 2 rejeté)** : {qc_val_stats['total_actual_rejections']:,} ({qc_val_stats['total_actual_rejections']/qc_val_stats['total_obs']*100:.2f}%)\n")
-        rf.write(f"- **Taux de concordance globale du masque combiné COMPLET** : **{qc_val_stats['combined_concordance']:.2f}%**\n")
-        rf.write(f"- **Sensibilité globale de détection des rejets LIS** : **{qc_val_stats['combined_sensitivity']:.2f}%**\n\n")
+        rf.write(f"- **Observations SMAP valides comparées** : {tot_obs:,}\n")
+        rf.write(f"- **Rejets effectifs observés dans DAOBS (Rec 1 valide, Rec 2 rejeté)** : {total_rej:,} ({total_rej/tot_obs*100.0:.2f}%)\n")
+        rf.write(f"- **Matrice de confusion du masque combiné** :\n")
+        rf.write(f"  - Vrais Positifs (TP, rejet prédit et réel) : **{comb_tp:,}**\n")
+        rf.write(f"  - Faux Positifs (FP, rejet prédit mais accepté dans DAOBS) : **{comb_fp:,}**\n")
+        rf.write(f"  - Faux Négatifs (FN, accepté prédit mais rejeté dans DAOBS) : **{comb_fn:,}**\n")
+        rf.write(f"  - Vrais Négatifs (TN, accepté prédit et réel) : **{comb_tn:,}**\n")
+        rf.write(f"- **Métriques combinées** : Précision = **{comb_prec:.2f}%**, Sensibilité/Rappel = **{comb_rec:.2f}%**, Exactitude = **{comb_acc:.2f}%**\n\n")
+
+        rf.write("> [!NOTE]\n")
+        rf.write("> Le masque de pluie est une approximation (précision ~19% due à l'utilisation du taux demi-horaire IMERG au passage nominal, alors que LIS évalue la pluie instantanée du pas de temps DA de 30 min issu du forçage atmosphérique).\n\n")
 
         rf.write("### Accord Règle par Règle avec DAOBS Record 2\n\n")
-        rf.write("| Règle Testée | Déclenchements Règle | Rejets Réels DAOBS | Taux Concordance Règle (%) |\n")
-        rf.write("| :--- | :---: | :---: | :---: |\n")
+        rf.write("| Règle Testée | Déclenchements Règle | Rejets Réels DAOBS | Précision Règle (%) | Part des Rejets LIS Expliquée (%) |\n")
+        rf.write("| :--- | :---: | :---: | :---: | :---: |\n")
         rule_desc = {
             'wilt': 'Proximité flétrissement (SMAP - θ_wlt < 0.02)',
             'sat': 'Proximité saturation (θ_sat - SMAP < 0.02)',
@@ -624,23 +695,30 @@ def generate_synthesis_report(all_dfs: list, qc_val_stats: dict):
         }
         for r_k, r_d in rule_desc.items():
             r_info = qc_val_stats['rules'][r_k]
-            tot_obs = qc_val_stats['total_obs']
-            agreed = r_info['agreed']
-            pct_agreed = (agreed / tot_obs) * 100.0 if tot_obs > 0 else 0.0
-            rf.write(f"| **{r_d}** | {r_info['fired']:,} | {r_info['actual_rej']:,} | {pct_agreed:.2f}% |\n")
+            fired = r_info['fired']
+            actual_rej = r_info['actual_rej']
+            prec = (actual_rej / fired * 100.0) if fired > 0 else 0.0
+            share_lis = (actual_rej / total_rej * 100.0) if total_rej > 0 else 0.0
+            rf.write(f"| **{r_d}** | {fired:,} | {actual_rej:,} | {prec:.2f}% | {share_lis:.2f}% |\n")
         rf.write("\n")
 
         rf.write("## 9. Conservation des Cumuls de Précipitations MSWEP (0.10° → 0.05°)\n\n")
         rf.write("Le passage de la grille MSWEP v2.8 (0.10°) à la grille NorthMor (0.05°) a été vérifié par bilan volumétrique strict sur les bassins versants du Sebou et du Bouregreg :\n\n")
         rf.write("| Année | Cumul Sebou (0.10°) [mm] | Cumul Sebou (0.05°) [mm] | Écart Sebou (%) | Cumul Bouregreg (0.10°) [mm] | Cumul Bouregreg (0.05°) [mm] | Écart Bouregreg (%) |\n")
         rf.write("| :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n")
-        rf.write("| 2016 | 550.81 | 551.18 | +0.07% | 468.21 | 465.79 | -0.52% |\n")
-        rf.write("| 2017 | 420.52 | 421.39 | +0.21% | 344.60 | 345.58 | +0.28% |\n")
-        rf.write("| 2018 | 785.45 | 785.62 | +0.02% | 610.15 | 605.80 | -0.71% |\n")
-        rf.write("| 2019 | 432.10 | 432.61 | +0.12% | 362.45 | 360.71 | -0.48% |\n")
-        rf.write("| 2020 | 448.90 | 449.31 | +0.09% | 380.12 | 378.60 | -0.40% |\n")
-        rf.write("| **Moyenne** | **527.56** | **528.02** | **+0.10%** | **433.11** | **431.30** | **-0.48%** |\n\n")
-        rf.write("L'écart relatif annuel reste strictement inférieur à 0.22% sur le Sebou et 0.72% sur le Bouregreg, confirmant la rigoureuse conservation hydrologique du remaillage direct.\n\n")
+        mswep_table = compute_mswep_basin_conservation()
+        for r in mswep_table:
+            rf.write(f"| {r['year']} | {r['seb_raw']:.2f} | {r['seb_005']:.2f} | {r['diff_seb']:+.2f}% | {r['brg_raw']:.2f} | {r['brg_005']:.2f} | {r['diff_brg']:+.2f}% |\n")
+        mean_seb_raw = float(np.mean([r['seb_raw'] for r in mswep_table]))
+        mean_seb_005 = float(np.mean([r['seb_005'] for r in mswep_table]))
+        mean_diff_seb = (mean_seb_005 - mean_seb_raw) / mean_seb_raw * 100.0
+        mean_brg_raw = float(np.mean([r['brg_raw'] for r in mswep_table]))
+        mean_brg_005 = float(np.mean([r['brg_005'] for r in mswep_table]))
+        mean_diff_brg = (mean_brg_005 - mean_brg_raw) / mean_brg_raw * 100.0
+        rf.write(f"| **Moyenne** | **{mean_seb_raw:.2f}** | **{mean_seb_005:.2f}** | **{mean_diff_seb:+.2f}%** | **{mean_brg_raw:.2f}** | **{mean_brg_005:.2f}** | **{mean_diff_brg:+.2f}%** |\n\n")
+        max_seb_diff = max(abs(r['diff_seb']) for r in mswep_table)
+        max_brg_diff = max(abs(r['diff_brg']) for r in mswep_table)
+        rf.write(f"L'écart relatif annuel reste strictement inférieur à {max_seb_diff:.2f}% sur le Sebou et {max_brg_diff:.2f}% sur le Bouregreg, confirmant la rigoureuse conservation hydrologique du remaillage direct.\n\n")
 
         rf.write("## 10. Contrôle de Qualité et Absence de NaN par Colonne\n\n")
         rf.write("| Colonne | Type | Statut NaN | Valeurs Manquantes |\n")

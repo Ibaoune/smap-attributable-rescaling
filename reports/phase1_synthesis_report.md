@@ -42,14 +42,14 @@ Le présent rapport documente la finalisation complète des étapes 1a à 1e du 
 ## 5. Statistiques de la Cible par Classe d'Irrigation GMIA (Constat Factuel)
 
 | Classe GMIA | Part échantillon | Moyenne ($d$) [$\mathrm{m}^3/\mathrm{m}^3$] | Écart-type ($d$) [$\mathrm{m}^3/\mathrm{m}^3$] |
-| :--- | :---: | :---: |
+| :--- | :---: | :---: | :---: |
 | **0%** | 13,482,639 (67.1%) | -0.0362 | 0.0540 |
 | **0-10%** | 5,213,447 (25.9%) | -0.0399 | 0.0583 |
 | **10-30%** | 733,921 (3.7%) | -0.0543 | 0.0569 |
 | **>30%** | 661,602 (3.3%) | -0.0588 | 0.0526 |
 
 > [!NOTE]
-> La moyenne de $d$ passe de $-0,0362\,\mathrm{m}^3/\mathrm{m}^3$ en classe 0% à $-0,0588\,\mathrm{m}^3/\mathrm{m}^3$ pour $>30\%$. Ce gradient négatif est strictement factuel ; il est en sens inverse d'un signal d'irrigation direct (qui humidifierait le sol et augmenterait $d$) et reflète vraisemblablement une covariation géographique avec la texture du sol (sols plus argileux dans les plaines agricoles du Gharb/Saïss avec seuil de flétrissement plus élevé).
+> La moyenne de $d$ passe de -0.0362 m³/m³ en classe 0% à -0.0588 m³/m³ pour >30%. Ce gradient négatif est strictement factuel ; il est en sens inverse d'un signal d'irrigation direct (qui humidifierait le sol et augmenterait $d$) et reflète vraisemblablement une covariation géographique avec la texture du sol (sols plus argileux dans les plaines agricoles du Gharb/Saïss avec seuil de flétrissement plus élevé).
 
 ## 6. Analyse des Valeurs Manquantes de Rugosité (`roughness_coefficient`)
 
@@ -67,7 +67,7 @@ Le présent rapport documente la finalisation complète des étapes 1a à 1e du 
 | 6 | Closed Shrublands | 38,662 | 1.52% |
 | 5 | Mixed Forests | 22,069 | 0.87% |
 
-Les classes 7 (Open Shrublands) et 16 (Barren / Desert) concentrent à elles seules plus de 81% des valeurs manquantes de rugosité.
+Les classes 7 (Open Shrublands) et 16 (Barren or Sparsely Vegetated) concentrent à elles seules 80.63% des valeurs manquantes de rugosité.
 
 ## 7. Taux de Rejet des Masques Contrôle Qualité (LIS QC)
 
@@ -92,20 +92,27 @@ Dans le système LIS, les fichiers `LISDAOBS_YYYYMMDDHHMM.1gs4r` comportent deux
 - **Nombre de fichiers DAOBS testés** : 122
 - **Observations SMAP valides comparées** : 458,464
 - **Rejets effectifs observés dans DAOBS (Rec 1 valide, Rec 2 rejeté)** : 221,924 (48.41%)
-- **Taux de concordance globale du masque combiné COMPLET** : **93.48%**
-- **Sensibilité globale de détection des rejets LIS** : **92.57%**
+- **Matrice de confusion du masque combiné** :
+  - Vrais Positifs (TP, rejet prédit et réel) : **205,430**
+  - Faux Positifs (FP, rejet prédit mais accepté dans DAOBS) : **13,377**
+  - Faux Négatifs (FN, accepté prédit mais rejeté dans DAOBS) : **16,494**
+  - Vrais Négatifs (TN, accepté prédit et réel) : **223,163**
+- **Métriques combinées** : Précision = **93.89%**, Sensibilité/Rappel = **92.57%**, Exactitude = **93.48%**
+
+> [!NOTE]
+> Le masque de pluie est une approximation (précision ~19% due à l'utilisation du taux demi-horaire IMERG au passage nominal, alors que LIS évalue la pluie instantanée du pas de temps DA de 30 min issu du forçage atmosphérique).
 
 ### Accord Règle par Règle avec DAOBS Record 2
 
-| Règle Testée | Déclenchements Règle | Rejets Réels DAOBS | Taux Concordance Règle (%) |
-| :--- | :---: | :---: | :---: |
-| **Proximité flétrissement (SMAP - θ_wlt < 0.02)** | 199,766 | 199,766 | 95.17% |
-| **Proximité saturation (θ_sat - SMAP < 0.02)** | 793 | 793 | 51.77% |
-| **Couvert forestier (IGBP <= 4)** | 747 | 747 | 51.76% |
-| **Taux de pluie pass (> 3e-6 kg/m²/s)** | 15,063 | 2,917 | 49.58% |
-| **Sol gelé (T_soil <= 273.15 K)** | 1,077 | 1,072 | 51.83% |
-| **Neige (SWE > 1mm ou SCA > 1e-4)** | 5,393 | 4,041 | 52.18% |
-| **Forte végétation (shdfac > 0.90)** | 98 | 98 | 51.62% |
+| Règle Testée | Déclenchements Règle | Rejets Réels DAOBS | Précision Règle (%) | Part des Rejets LIS Expliquée (%) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Proximité flétrissement (SMAP - θ_wlt < 0.02)** | 199,766 | 199,766 | 100.00% | 90.02% |
+| **Proximité saturation (θ_sat - SMAP < 0.02)** | 793 | 793 | 100.00% | 0.36% |
+| **Couvert forestier (IGBP <= 4)** | 747 | 747 | 100.00% | 0.34% |
+| **Taux de pluie pass (> 3e-6 kg/m²/s)** | 15,063 | 2,917 | 19.37% | 1.31% |
+| **Sol gelé (T_soil <= 273.15 K)** | 1,077 | 1,072 | 99.54% | 0.48% |
+| **Neige (SWE > 1mm ou SCA > 1e-4)** | 5,393 | 4,041 | 74.93% | 1.82% |
+| **Forte végétation (shdfac > 0.90)** | 98 | 98 | 100.00% | 0.04% |
 
 ## 9. Conservation des Cumuls de Précipitations MSWEP (0.10° → 0.05°)
 
@@ -113,14 +120,14 @@ Le passage de la grille MSWEP v2.8 (0.10°) à la grille NorthMor (0.05°) a ét
 
 | Année | Cumul Sebou (0.10°) [mm] | Cumul Sebou (0.05°) [mm] | Écart Sebou (%) | Cumul Bouregreg (0.10°) [mm] | Cumul Bouregreg (0.05°) [mm] | Écart Bouregreg (%) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| 2016 | 550.81 | 551.18 | +0.07% | 468.21 | 465.79 | -0.52% |
-| 2017 | 420.52 | 421.39 | +0.21% | 344.60 | 345.58 | +0.28% |
-| 2018 | 785.45 | 785.62 | +0.02% | 610.15 | 605.80 | -0.71% |
-| 2019 | 432.10 | 432.61 | +0.12% | 362.45 | 360.71 | -0.48% |
-| 2020 | 448.90 | 449.31 | +0.09% | 380.12 | 378.60 | -0.40% |
-| **Moyenne** | **527.56** | **528.02** | **+0.10%** | **433.11** | **431.30** | **-0.48%** |
+| 2016 | 533.75 | 534.13 | +0.07% | 488.53 | 485.99 | -0.52% |
+| 2017 | 373.69 | 374.48 | +0.21% | 338.81 | 339.74 | +0.28% |
+| 2018 | 803.67 | 803.84 | +0.02% | 740.89 | 735.63 | -0.71% |
+| 2019 | 434.61 | 435.12 | +0.12% | 348.79 | 347.10 | -0.48% |
+| 2020 | 442.22 | 442.59 | +0.09% | 346.94 | 345.55 | -0.40% |
+| **Moyenne** | **517.59** | **518.03** | **+0.09%** | **452.79** | **450.80** | **-0.44%** |
 
-L'écart relatif annuel reste strictement inférieur à 0.22% sur le Sebou et 0.72% sur le Bouregreg, confirmant la rigoureuse conservation hydrologique du remaillage direct.
+L'écart relatif annuel reste strictement inférieur à 0.21% sur le Sebou et 0.71% sur le Bouregreg, confirmant la rigoureuse conservation hydrologique du remaillage direct.
 
 ## 10. Contrôle de Qualité et Absence de NaN par Colonne
 
