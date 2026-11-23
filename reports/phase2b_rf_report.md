@@ -1,6 +1,6 @@
 # Rapport d'Évaluation Phase 2b : Premier Modèle d'Apprentissage (Random Forest)
 
-**Date d'exécution** : 2026-11-23 12:28:32  
+**Date d'exécution** : 2026-11-23 12:54:29  
 **Période d'entraînement** : 2016–2018 (`split == 'train'`).  
 **Période d'évaluation** : 2019 (`split == 'val'`).  
 **Statut de l'année 2020** : 2020 reste strictement scellée.  
@@ -88,7 +88,7 @@ Socle d'observations 2019 passant les règles QC hors flétrissement : 3,660,799
 
 ## 7. Préservation du Signal d'Irrigation : Contraste GMIA >30 % vs 0 % en Clay Loam
 
-Contraste $\Delta d_{\text{res}} = \b\bar{d}_{\text{res}}(>30\%) - \b\bar{d}_{\text{res}}(0\%)$ avec intervalle de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
+Contraste $\Delta d_{\text{res}} = \bar{d}_{\text{res}}(>30\%) - \bar{d}_{\text{res}}(0\%)$ avec intervalle de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
 
 | Saison | Échantillon | Contraste B0 | Contraste B1 | Contraste B2 | Contraste RF (SAR) | Effectif (>30% / 0%) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
@@ -108,14 +108,11 @@ Contraste $\Delta d_{\text{res}} = \b\bar{d}_{\text{res}}(>30\%) - \b\bar{d}_{
 ## 8. Part des Valeurs Sous le Seuil de Flétrissement par Saison ($\text{SM}^* < \theta_{\text{wlt}} + 0.02$)
 
 | Saison | B0 (NoCDF) | B1 (Climatologie) | B2 (CDF v2) | RF (SAR main) | RF-ctx (Sensibilité) |
-|:---|:---:|:---:|:---:|:---:|:---:|
+|:---|:---:|:---:|:---:|:---:|
 | DJF | 39.65% | 0.31% | 3.87% | 0.97% | 6.27% |
 | MAM | 52.94% | 11.63% | 8.06% | 4.28% | 11.41% |
 | JJA | 57.25% | 54.02% | 57.86% | 5.76% | 56.85% |
 | SON | 44.46% | 5.91% | 16.17% | 2.14% | 21.60% |
-
----
-
 ## 9. Fichiers et Tables Produites
 
 - **Table de métriques détaillées** : `reports/phase2b_rf_metrics.csv`

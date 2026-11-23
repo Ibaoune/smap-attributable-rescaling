@@ -93,7 +93,7 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
 ---
 
 ## Décision 9 : Diagnostic du Signal d'Irrigation Dynamique (Événements d'Humidification sans Pluie)
-- **Contexte** : Dans la Phase 2a, le contraste statique GMIA >30% vs 0% sur l'écart $d = \text{SMAP} - \text{OL}$ révèle une signature d'irrigation estivale. Pour isoler la dynamique événementielle des arrosages agricoles indépendamment du biais moyen, un diagnostic temporel d'« humidification sans pluie » est nécessaire.
+- **Contexte** : Dans la Phase 2a, le contraste statique GMIA >30% vs 0% sur l'écart $d = \text{SMAP} - \text{OL}$ présente un intervalle de confiance recouvrant zéro en Clay Loam. Pour quantifier la dynamique événementielle des hausses d'humidité indépendamment du biais statique moyen, un diagnostic temporel d'« humidification sans pluie » est appliqué.
 - **Décision** :
   1. **Définition de l'événement** : Paires d'observations satellitaires SMAP consécutives du même passage orbital (AM–AM ou PM–PM), séparées d'au plus 3 jours ($1 \le \Delta t \le 3$), satisfaisant simultanément :
      - Hausse de l'humidité du sol : $\Delta\text{SM} = \text{SM}(t) - \text{SM}(t - \Delta t) > \text{seuil}_{\text{SM}}$ (par défaut 0,03 m³/m³).
@@ -110,9 +110,52 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
 - **Décision** :
   1. **Population d'entraînement (2016–2018)** : Observations passant l'ensemble des contrôles de qualité (QC) de LIS DA à l'exclusion de la règle de flétrissement.
   2. **Sous-échantillonnage stratifié spatialement** : Pour pallier l'hétérogénéité orbitale et la disparité des masquages QC entre cellules, un échantillonnage aléatoire stratifié uniforme de 20 observations par pixel est appliqué sur 2016–2018 (10 par an maximum).
-  3. **Validation croisée spatiale équilibrée** : 5 plis spatiaux constitués de blocs de 1° regroupés par compacité géographique et équilibrés en effectif, garantissant une étanchéité spatiale complète (zéro fuite d'autocorrélation).
+  3. **Validation croisée spatiale équilibrée** : 5 plis spatiaux constitués de blocs géographiques de 1° regroupés par compacité spatiale et équilibrés en effectif de mailles.
   4. **Formulation du Rescaling Attribuable (SAR)** :
      - Modèle principal (SAR main) : $\text{SMAP}^* = \text{SMAP} - (\Phi_{\text{removable}} + \phi_0)$. Le groupe `retained` (dont `irrigfrac_gmia` et les écarts pluviométriques) est conservé intact dans l'observation corrigée.
      - Variante de sensibilité : $\text{SMAP}^*_{\text{ctx}} = \text{SMAP} - (\Phi_{\text{removable}} + \Phi_{\text{context}} + \phi_0)$, permettant de quantifier l'impact du retrait du contexte temporel/modèle.
   5. **Recalcul du flétrissement et protocole d'évaluation** : La règle $\text{SMAP}^* < \theta_{\text{wlt}} + 0.02$ est recalculée pour chaque observation corrigée sur l'année de validation 2019 (`split == 'val'`). Évaluation strictement identique au protocole Phase 2a (échantillons spécifique et commun à B0/B1/B2/RF/RF-ctx). Année 2020 scellée.
 - **Statut** : Acté.
+
+---
+
+## Décision 11 : Remplacement du Témoin OL par Différence de Différences (DiD) et Tendance Continue
+- **Contexte** : Dans la simulation Noah-MP Open Loop, l'irrigation n'est pas modélisée (`noirr`). Le témoin OL d'humidification sans pluie est donc nul par construction (0,000 % d'événements) et n'apporte aucune information empirique supplémentaire.
+- **Décision** :
+  1. **Différence de différences (DiD)** : Pour contrôler les effets fixes spatiaux de texture et les variations saisonnières climatiques, le signal dynamique est quantifié par :
+     $$\text{DiD} = [f(>30\,\%) - f(0\,\%)]_{\text{JJA}} - [f(>30\,\%) - f(0\,\%)]_{\text{DJF}}$$
+     à texture fixée, avec intervalles de confiance à 95 % par bootstrap sur blocs de 1°.
+  2. **Test de tendance continue** : Régression linéaire de la fréquence d'humidification sans pluie en fonction de la fraction GMIA continue ($[0, 1]$), par texture et par saison, rapportant la pente $\beta$ (%/fraction GMIA) et la corrélation de Pearson $r$, avec intervalles de confiance à 95 % par bootstrap sur blocs de 1°.
+- **Statut** : Acté et intégré dans `scripts/08_diagnose_dynamic_irrigation.py`.
+
+---
+
+## Décision 12 : Passage à LightGBM et Attribution TreeSHAP Exacte (Phase 2c)
+- **Contexte** : Le Random Forest avec TreeExplainer Python et approximations de Saabas limitait la taille d'entraînement (20 obs/pixel) et présentait des déviations d'additivité.
+- **Décision** :
+  1. **Algorithme principal** : LightGBM (`LGBMRegressor`, 300 estimateurs, `learning_rate=0.05`, `num_leaves=63`). Le Random Forest est conservé uniquement à titre de comparaison historique.
+  2. **Taille d'échantillon d'entraînement** : Échantillon stratifié de 100 observations par pixel tirées uniformément parmi les observations non-wilt QC-valides sur 2016–2018 (soit 1 425 000 observations sur 14 250 pixels).
+  3. **Attribution TreeSHAP exacte** : Calcul natif C++ par `model.booster_.predict(X, pred_contrib=True)` sur l'intégralité des 3 660 799 observations de l'année de validation 2019. Aucune approximation de Saabas n'est autorisée. L'additivité exacte de Lundberg ($\sum \phi_j + \phi_0 = \hat{y}$) est vérifiée numériquement (déviation maximale $\le 10^{-15}$).
+- **Statut** : Acté et intégré dans `scripts/10_train_phase2c_lightgbm.py`.
+
+---
+
+## Décision 13 : Partitionnement du Contexte et Variantes de Rescaling (V1, V2, V3)
+- **Contexte** : Dans `configs/predictors.yaml`, le groupe contexte regroupe à la fois des représentations temporelles/statiques d'état et des flux dynamiques de processus.
+- **Décision** :
+  1. **Scission du groupe contexte** :
+     - `context_representation` (4 variables) : `doy_sin`, `doy_cos`, `ssm_lag1`, `ssm_rel_wilt_ref_lag1`.
+     - `context_process` (8 variables) : `sm_layer2_lag1`, `sm_layer3_lag1`, `sm_layer4_lag1`, `rzsm_lag1`, `et_lag1`, `surface_runoff_lag1`, `baseflow_lag1`, `lai_lag1`.
+  2. **Trois variantes de correction additive** (toutes avec $\phi_0$) :
+     - **V1 (removable)** : $\text{SMAP}^*_{\text{V1}} = \text{SMAP} - (\Phi_{\text{removable}} + \phi_0)$.
+     - **V2 (removable + context_representation)** : $\text{SMAP}^*_{\text{V2}} = \text{SMAP} - (\Phi_{\text{removable}} + \Phi_{\text{context\_rep}} + \phi_0)$.
+     - **V3 (removable + all context)** : $\text{SMAP}^*_{\text{V3}} = \text{SMAP} - (\Phi_{\text{removable}} + \Phi_{\text{context\_rep}} + \Phi_{\text{context\_proc}} + \phi_0)$ (analogue de RF-ctx).
+  3. **Métriques requises** : Pour chaque variante, rapport systématique de la correction moyenne appliquée $\overline{\Delta\text{SMAP}}$ et du biais résiduel $\overline{d_{\text{res}}}$ par saison (DJF, MAM, JJA, SON) et en annuel, en plus du protocole complet 2a.
+- **Statut** : Acté et intégré dans `configs/predictors.yaml` et `scripts/10_train_phase2c_lightgbm.py`.
+
+---
+
+## Décision 14 : Reconstruction LDT de la Référence CDF B2-train (2016-01-01 à 2019-01-01)
+- **Contexte** : La référence historique B2 (2016–2021) englobait la période d'évaluation 2019 et la période scellée 2020.
+- **Décision** : Reconstruire avec LDT les fichiers CDF observation et modèle strictement sur la période d'entraînement 2016-01-01 00:00:00 à 2019-01-01 00:00:00 dans `experiments/ldt_b2_train/` (accord utilisateur explicite reçu). Cette nouvelle référence, notée **B2-train**, élimine toute fuite temporelle et est intégrée à l'ensemble des comparaisons du protocole 2a.
+- **Statut** : Exécuté et validé.

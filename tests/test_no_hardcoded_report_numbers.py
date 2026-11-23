@@ -75,7 +75,8 @@ def test_no_interpretive_phrasing_in_report_generators():
     for script_name, func_name in [
         ("05_assemble_modeling_tables.py", "generate_synthesis_report"),
         ("07_run_phase2a_baselines.py", "generate_refined_synthesis_report"),
-        ("08_diagnose_dynamic_irrigation.py", "generate_markdown_report")
+        ("08_diagnose_dynamic_irrigation.py", "generate_markdown_report"),
+        ("10_train_phase2c_lightgbm.py", "generate_markdown_report")
     ]:
         script_path = os.path.join(ROOT_DIR, "scripts", script_name)
         with open(script_path, "r") as f:
@@ -116,8 +117,8 @@ def test_no_hardcoded_decimal_literals_in_phase2a_bis_report_generator():
     hardcoded_decimals = re.findall(r'\d+\.\d+', cleaned)
     assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Phase 2a-bis generator: {hardcoded_decimals}"
 
-    assert "{table_cl_jja}" in src
-    assert "{table_loam_jja}" in src
+    assert "{table_did}" in src
+    assert "{table_trend}" in src
     assert "{table_months}" in src
     assert "{table_sens}" in src
 
@@ -147,3 +148,33 @@ def test_no_hardcoded_decimal_literals_in_phase2b_report_generator():
     assert "{anom_table}" in src
     assert "{contrast_table}" in src
     assert "{wlt_table}" in src
+
+
+def test_no_hardcoded_decimal_literals_in_phase2c_report_generator():
+    """Verify that generate_markdown_report in scripts/10_train_phase2c_lightgbm.py
+    does not contain hardcoded decimal literals or hardcoded result numbers in static text.
+    """
+    script_path = os.path.join(ROOT_DIR, "scripts", "10_train_phase2c_lightgbm.py")
+    with open(script_path, "r") as f:
+        full_code = f.read()
+
+    start = full_code.find("def generate_markdown_report(")
+    end = full_code.find("def main():", start)
+    src = full_code[start:end]
+
+    text_outside_braces = re.sub(r"\{[^}]+\}", "", src)
+    # Exclude standard domain coordinates or physical thresholds if any
+    # Exclude section numbers like '3.1', '3.2', '5.1', '5.2'
+    text_outside_braces = re.sub(r'#+\s*\d+\.\d+', '', text_outside_braces)
+    cleaned = text_outside_braces.replace("0.05", "").replace("0.02", "").replace("1.0", "")
+    hardcoded_decimals = re.findall(r"\b\d+\.\d+\b", cleaned)
+    assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Phase 2c generator: {hardcoded_decimals}"
+
+    assert "{cv_table}" in src
+    assert "{stab_table}" in src
+    assert "{top15_table}" in src
+    assert "{seas_table}" in src
+    assert "{table_spec}" in src
+    assert "{table_comm}" in src
+    assert "{mean_cv_rmse:.4f}" in src
+    assert "{mean_rho_top15:.4f}" in src

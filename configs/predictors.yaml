@@ -103,8 +103,8 @@ groups:
         units: "days"
         description: "Count of consecutive antecedent days since last precipitation > 1.0 mm"
 
-  context:
-    description: "Temporal and antecedent model context whose retention status will be decided via sensitivity analysis"
+  context_representation:
+    description: "Temporal and surface state representation features (seasonality, antecedent surface soil moisture, and relative wilting state)"
     features:
       - name: "doy_sin"
         formula: "sin(2 * pi * doy / 365.25)"
@@ -119,6 +119,14 @@ groups:
         source: "OPL SoilMoist_tavg layer 1 daily average at t-1"
         description: "Antecedent OL surface soil moisture at t-1 (strictly no t OL)"
 
+      - name: "ssm_rel_wilt_ref_lag1"
+        units: "index [0, 1.5]"
+        formula: "(ssm_lag1 - smcwlt) / (smcref - smcwlt)"
+        description: "Antecedent relative SSM between wilting and field capacity at t-1"
+
+  context_process:
+    description: "Deep hydrologic and ecohydrologic process state/flux features (subsurface soil layers, root zone, evapotranspiration, runoff, baseflow, LAI)"
+    features:
       - name: "sm_layer2_lag1"
         units: "m3/m3"
         source: "OPL SoilMoist_tavg layer 2 daily average at t-1"
@@ -158,8 +166,3 @@ groups:
         units: "m2/m2"
         source: "OPL LAI_tavg leaf area index at t-1"
         description: "Antecedent OL leaf area index at t-1"
-
-      - name: "ssm_rel_wilt_ref_lag1"
-        units: "index [0, 1.5]"
-        formula: "(ssm_lag1 - smcwlt) / (smcref - smcwlt)"
-        description: "Antecedent relative SSM between wilting and field capacity at t-1"

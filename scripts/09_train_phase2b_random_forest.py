@@ -712,6 +712,10 @@ def generate_rf_report(df_metrics, df_cv, df_shap_stab, df_contrast, anom_corr, 
         )
     wlt_table = chr(10).join(wlt_rows)
     
+    latex_contrast = r"$\Delta d_{\text{res}} = \bar{d}_{\text{res}}(>30\%) - \bar{d}_{\text{res}}(0\%)$"
+    latex_wlt = r"$\text{SM}^* < \theta_{\text{wlt}} + 0.02$"
+    latex_anom = r"$r_{\text{anom}}$"
+    
     report_md = f"""# Rapport d'Évaluation Phase 2b : Premier Modèle d'Apprentissage (Random Forest)
 
 **Date d'exécution** : {time.strftime('%Y-%m-%d %H:%M:%S')}  
@@ -768,9 +772,9 @@ Socle d'observations 2019 passant les règles QC hors flétrissement : {n_base_q
 
 ---
 
-## 6. Corrélation d'Anomalies avec SMAP Brut ($r_{\\text{anom}}$)
+## 6. Corrélation d'Anomalies avec SMAP Brut ({latex_anom})
 
-| Méthode | $r_{\\text{anom}}$ spécifique | N spécifique | $r_{\\text{anom}}$ commun | N commun |
+| Méthode | {latex_anom} spécifique | N spécifique | {latex_anom} commun | N commun |
 |:---|:---:|:---:|:---:|:---:|
 {anom_table}
 
@@ -778,7 +782,7 @@ Socle d'observations 2019 passant les règles QC hors flétrissement : {n_base_q
 
 ## 7. Préservation du Signal d'Irrigation : Contraste GMIA >30 % vs 0 % en Clay Loam
 
-Contraste $\\Delta d_{\\text{res}} = \\bar{d}_{\\text{res}}(>30\\%) - \\bar{d}_{\\text{res}}(0\\%)$ avec intervalle de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
+Contraste {latex_contrast} avec intervalle de confiance à 95% par bootstrap par blocs de 1° (500 itérations) :
 
 | Saison | Échantillon | Contraste B0 | Contraste B1 | Contraste B2 | Contraste RF (SAR) | Effectif (>30% / 0%) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
@@ -786,14 +790,11 @@ Contraste $\\Delta d_{\\text{res}} = \\bar{d}_{\\text{res}}(>30\\%) - \\bar{d}_{
 
 ---
 
-## 8. Part des Valeurs Sous le Seuil de Flétrissement par Saison ($\text{{SM}}^* < \theta_{{\text{{wlt}}}} + 0.02$)
+## 8. Part des Valeurs Sous le Seuil de Flétrissement par Saison ({latex_wlt})
 
 | Saison | B0 (NoCDF) | B1 (Climatologie) | B2 (CDF v2) | RF (SAR main) | RF-ctx (Sensibilité) |
-|:---|:---:|:---:|:---:|:---:|:---:|
+|:---|:---:|:---:|:---:|:---:|
 {wlt_table}
-
----
-
 ## 9. Fichiers et Tables Produites
 
 - **Table de métriques détaillées** : `reports/phase2b_rf_metrics.csv`

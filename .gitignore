@@ -17,8 +17,8 @@ dist/
 
 # Data directories (strictly untracked in git)
 data/
-!data/**/README.md
-!data/**/.gitkeep
+*/README.md
+*/.gitkeep
 
 # Logs and Slurm outputs
 logs/
@@ -32,3 +32,10 @@ figures/*.pdf
 figures/*.svg
 figures/scratch/
 reports/scratch/
+
+# Experiments binary outputs and logs
+experiments/**/*.nc
+experiments/**/OUTPUT_*/
+experiments/**/*.log*
+experiments/**/MPFilltest*
+experiments/**/SMAP_filelist.dat
