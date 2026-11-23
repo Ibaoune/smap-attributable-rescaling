@@ -42,6 +42,7 @@ def load_all_data():
         lon_1d = ds.variables['lon'][:]
         landmask = ds.variables['landmask'][:]
         dom_soil = ds.variables['dominant_soiltype'][:]
+        soil_wlt = ds.variables['soil_wlt'][:]
 
     print("Loading annual modeling tables (2016-2020)...")
     dfs = []
@@ -50,13 +51,14 @@ def load_all_data():
         pq = os.path.join(OUT_TABLE_DIR, f"sar_modeling_table_{y}.parquet")
         df_y = pd.read_parquet(pq, columns=[
             'year', 'month', 'pass', 'pixel_id', 'spatial_block_id',
-            'season', 'gmia_class', 'target_d', 'qc_lis_combined', 'qc_lis_wilt_limit'
+            'season', 'gmia_class', 'target_d', 'qc_lis_combined', 'qc_lis_wilt_limit',
+            'smap_sm', 'ssm_ol_daily'
         ])
         print(f"  Loaded {pq}: {len(df_y):,} rows")
         dfs.append(df_y)
     df_all = pd.concat(dfs, ignore_index=True)
     print(f"Total observations loaded: {len(df_all):,}")
-    return lat_1d, lon_1d, landmask, dom_soil, df_all
+    return lat_1d, lon_1d, landmask, dom_soil, soil_wlt, df_all
 
 
 def generate_f1(lat_1d, lon_1d, landmask, df_all):
@@ -352,11 +354,7 @@ def generate_f3(dom_soil, df_all):
             
             ax.errorbar(x, y, yerr=ci, label=soil, fmt='-o', color=colors[soil],
                         capsize=5, capthick=1.5, linewidth=2, markersize=6)
-            for xi, yi, pxi in zip(x, y, npix):
-                if not np.isnan(yi):
-                    ax.annotate(f"{pxi}px", (xi, yi), textcoords="offset points",
-                                xytext=(0, 6 if soil in ['Loam', 'Clay Loam'] else -10),
-                                ha='center', fontsize=6.5, color=colors[soil], alpha=0.85)
+            pass
 
         ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
         ax.set_xticks(range(len(gmia_order)))
@@ -396,11 +394,7 @@ def generate_f3(dom_soil, df_all):
             
             ax.errorbar(x, y, yerr=ci, label=soil, fmt='-o', color=colors[soil],
                         capsize=5, capthick=1.5, linewidth=2, markersize=6)
-            for xi, yi, pxi in zip(x, y, npix):
-                if not np.isnan(yi):
-                    ax.annotate(f"{pxi}px", (xi, yi), textcoords="offset points",
-                                xytext=(0, 6 if soil in ['Loam', 'Clay Loam'] else -10),
-                                ha='center', fontsize=6.5, color=colors[soil], alpha=0.85)
+            pass
 
         ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
         ax.set_xticks(range(len(gmia_order)))
@@ -536,15 +530,148 @@ def generate_f4(lat_1d, lon_1d, landmask, df_all):
     print(f"  Saved Figure F4 (FR & EN): {fig_path_fr}, {fig_path_en}")
 
 
+def generate_f5(lat_1d, lon_1d, landmask, soil_wlt, df_all):
+    """F5: Diagnostic d'été - part des valeurs OL (ssm_ol_daily) et SMAP brut sous θ_wlt + 0.02 par mois et sur cartes JJA."""
+    print("--- Generating Figure F5 & Source CSVs ---")
+    n_lat, n_lon = len(lat_1d), len(lon_1d)
+    r = df_all['pixel_id'].values // n_lon
+    c = df_all['pixel_id'].values % n_lon
+    wlt_thresh = soil_wlt[r, c] + 0.02
+    df_all['ol_under_wlt'] = (df_all['ssm_ol_daily'] < wlt_thresh).astype(int)
+    df_all['smap_under_wlt'] = (df_all['smap_sm'] < wlt_thresh).astype(int)
+    
+    # Monthly stats
+    monthly = (df_all.groupby('month')[['ol_under_wlt', 'smap_under_wlt']].mean() * 100.0).reset_index()
+    monthly.rename(columns={'ol_under_wlt': 'ol_pct_under_wlt', 'smap_under_wlt': 'smap_pct_under_wlt'}, inplace=True)
+    csv_month_path = os.path.join(OUT_FIG_DIR, "F5_wilt_diagnostic_monthly.csv")
+    monthly.to_csv(csv_month_path, index=False)
+    print(f"  Saved F5 monthly source CSV: {csv_month_path}")
+    
+    # JJA spatial map stats
+    df_jja = df_all[df_all['season'] == 'JJA']
+    jja_pix = (df_jja.groupby('pixel_id')[['ol_under_wlt', 'smap_under_wlt']].mean() * 100.0).reset_index()
+    ol_jja_dict = dict(zip(jja_pix['pixel_id'], jja_pix['ol_under_wlt']))
+    smap_jja_dict = dict(zip(jja_pix['pixel_id'], jja_pix['smap_under_wlt']))
+    
+    ol_grid = np.full((n_lat, n_lon), np.nan, dtype=np.float32)
+    smap_grid = np.full((n_lat, n_lon), np.nan, dtype=np.float32)
+    csv_map_rows = []
+    for ri in range(n_lat):
+        for ci in range(n_lon):
+            if landmask[ri, ci] == 1:
+                pid = ri * n_lon + ci
+                ol_val = ol_jja_dict.get(pid, np.nan)
+                smap_val = smap_jja_dict.get(pid, np.nan)
+                ol_grid[ri, ci] = ol_val
+                smap_grid[ri, ci] = smap_val
+                csv_map_rows.append({
+                    'pixel_id': pid,
+                    'lat': lat_1d[ri],
+                    'lon': lon_1d[ci],
+                    'ol_jja_pct_under_wlt': np.round(ol_val, 2),
+                    'smap_jja_pct_under_wlt': np.round(smap_val, 2)
+                })
+                
+    df_csv_map = pd.DataFrame(csv_map_rows)
+    csv_map_path = os.path.join(OUT_FIG_DIR, "F5_wilt_diagnostic_jja_map.csv")
+    df_csv_map.to_csv(csv_map_path, index=False)
+    print(f"  Saved F5 spatial source CSV: {csv_map_path}")
+    
+    # Plotting F5 (FR & EN)
+    extent = [lon_1d.min(), lon_1d.max(), lat_1d.min(), lat_1d.max()]
+    mask_sea = (landmask == 0)
+    ol_m = np.ma.masked_where(mask_sea, ol_grid)
+    smap_m = np.ma.masked_where(mask_sea, smap_grid)
+    months = np.arange(1, 13)
+    
+    # FR Figure
+    fig = plt.figure(figsize=(15, 11))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.2, 1.0], hspace=0.28, wspace=0.20)
+    
+    # Top Left: OL JJA map
+    ax1 = fig.add_subplot(gs[0, 0])
+    im1 = ax1.imshow(ol_m, origin='lower', extent=extent, cmap='YlOrRd', vmin=0, vmax=100, interpolation='none')
+    ax1.set_title("A. Modèle Noah-MP Open Loop : Part des jours d'été (JJA) sous θ_wlt + 0,02", fontsize=11, fontweight='bold')
+    ax1.set_xlabel("Longitude (°E)", fontsize=10)
+    ax1.set_ylabel("Latitude (°N)", fontsize=10)
+    plt.colorbar(im1, ax=ax1, orientation='horizontal', pad=0.10, fraction=0.046).set_label("Jours d'été sous le seuil (%)", fontsize=9)
+    
+    # Top Right: SMAP JJA map
+    ax2 = fig.add_subplot(gs[0, 1])
+    im2 = ax2.imshow(smap_m, origin='lower', extent=extent, cmap='YlOrRd', vmin=0, vmax=100, interpolation='none')
+    ax2.set_title("B. Observations SMAP brut : Part des passages d'été (JJA) sous θ_wlt + 0,02", fontsize=11, fontweight='bold')
+    ax2.set_xlabel("Longitude (°E)", fontsize=10)
+    ax2.set_ylabel("Latitude (°N)", fontsize=10)
+    plt.colorbar(im2, ax=ax2, orientation='horizontal', pad=0.10, fraction=0.046).set_label("Passages d'été sous le seuil (%)", fontsize=9)
+    
+    # Bottom: Monthly comparison
+    ax3 = fig.add_subplot(gs[1, :])
+    x_m = np.arange(1, 13)
+    width = 0.35
+    month_names_fr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc']
+    ax3.bar(x_m - width/2, monthly['ol_pct_under_wlt'], width=width, color='#2ca02c', label='Noah-MP Open Loop (ssm_ol_daily)', alpha=0.85)
+    ax3.bar(x_m + width/2, monthly['smap_pct_under_wlt'], width=width, color='#1f77b4', label='SMAP brut (smap_sm)', alpha=0.85)
+    ax3.set_title("C. Évolution mensuelle de la part des valeurs sous le seuil de flétrissement (θ_wlt + 0,02)", fontsize=11, fontweight='bold')
+    ax3.set_xticks(x_m)
+    ax3.set_xticklabels(month_names_fr, fontsize=10)
+    ax3.set_xlabel("Mois de l'année", fontsize=10)
+    ax3.set_ylabel("Part sous le seuil (%)", fontsize=10)
+    ax3.set_ylim(0, 100)
+    ax3.grid(True, linestyle=':', alpha=0.5)
+    ax3.legend(fontsize=10, loc='upper left')
+    
+    plt.suptitle("F5. Diagnostic du dessèchement estival : comparaison Noah-MP Open Loop vs SMAP brut (2016-2020)", fontsize=13, fontweight='bold', y=0.98)
+    fig_path_fr = os.path.join(OUT_FIG_DIR, "F5_wilt_diagnostic_ol_vs_smap.png")
+    plt.savefig(fig_path_fr, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # EN Figure (zero interpretation words)
+    fig = plt.figure(figsize=(15, 11))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.2, 1.0], hspace=0.28, wspace=0.20)
+    
+    ax1 = fig.add_subplot(gs[0, 0])
+    im1 = ax1.imshow(ol_m, origin='lower', extent=extent, cmap='YlOrRd', vmin=0, vmax=100, interpolation='none')
+    ax1.set_title("A. Noah-MP Open Loop: Summer (JJA) fraction below θ_wlt + 0.02", fontsize=11, fontweight='bold')
+    ax1.set_xlabel("Longitude (°E)", fontsize=10)
+    ax1.set_ylabel("Latitude (°N)", fontsize=10)
+    plt.colorbar(im1, ax=ax1, orientation='horizontal', pad=0.10, fraction=0.046).set_label("Summer days below threshold (%)", fontsize=9)
+    
+    ax2 = fig.add_subplot(gs[0, 1])
+    im2 = ax2.imshow(smap_m, origin='lower', extent=extent, cmap='YlOrRd', vmin=0, vmax=100, interpolation='none')
+    ax2.set_title("B. Raw SMAP: Summer (JJA) fraction below θ_wlt + 0.02", fontsize=11, fontweight='bold')
+    ax2.set_xlabel("Longitude (°E)", fontsize=10)
+    ax2.set_ylabel("Latitude (°N)", fontsize=10)
+    plt.colorbar(im2, ax=ax2, orientation='horizontal', pad=0.10, fraction=0.046).set_label("Summer observations below threshold (%)", fontsize=9)
+    
+    ax3 = fig.add_subplot(gs[1, :])
+    month_names_en = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    ax3.bar(x_m - width/2, monthly['ol_pct_under_wlt'], width=width, color='#2ca02c', label='Noah-MP Open Loop (ssm_ol_daily)', alpha=0.85)
+    ax3.bar(x_m + width/2, monthly['smap_pct_under_wlt'], width=width, color='#1f77b4', label='Raw SMAP (smap_sm)', alpha=0.85)
+    ax3.set_title("C. Monthly fraction of values below wilting point threshold (θ_wlt + 0.02)", fontsize=11, fontweight='bold')
+    ax3.set_xticks(x_m)
+    ax3.set_xticklabels(month_names_en, fontsize=10)
+    ax3.set_xlabel("Month of year", fontsize=10)
+    ax3.set_ylabel("Fraction below threshold (%)", fontsize=10)
+    ax3.set_ylim(0, 100)
+    ax3.grid(True, linestyle=':', alpha=0.5)
+    ax3.legend(fontsize=10, loc='upper left')
+    
+    plt.suptitle("F5. Summer drydown diagnostic: Noah-MP Open Loop vs Raw SMAP (2016-2020)", fontsize=13, fontweight='bold', y=0.98)
+    fig_path_en = os.path.join(OUT_FIG_DIR_EN, "F5_wilt_diagnostic_ol_vs_smap_en.png")
+    plt.savefig(fig_path_en, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved Figure F5 (FR & EN): {fig_path_fr}, {fig_path_en}")
+
 def main():
     os.makedirs(OUT_FIG_DIR, exist_ok=True)
     os.makedirs(OUT_FIG_DIR_EN, exist_ok=True)
-    lat_1d, lon_1d, landmask, dom_soil, df_all = load_all_data()
+    lat_1d, lon_1d, landmask, dom_soil, soil_wlt, df_all = load_all_data()
     generate_f1(lat_1d, lon_1d, landmask, df_all)
     generate_f2(lat_1d, lon_1d, landmask, df_all)
     generate_f3(dom_soil, df_all)
     generate_f4(lat_1d, lon_1d, landmask, df_all)
-    print("\nDescriptive figures F1-F4 (FR & EN) and CSVs generated successfully.")
+    generate_f5(lat_1d, lon_1d, landmask, soil_wlt, df_all)
+    print("Descriptive figures F1-F5 (FR & EN) and CSVs generated successfully.")
 
 
 if __name__ == "__main__":

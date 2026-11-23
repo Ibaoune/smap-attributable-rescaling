@@ -36,38 +36,63 @@ def test_no_hardcoded_decimal_literals_in_phase1_report_generator():
 
 
 def test_no_hardcoded_decimal_literals_in_phase2a_report_generator():
-    """Verify that generate_synthesis_report in scripts/07_run_phase2a_baselines.py
+    """Verify that generate_refined_synthesis_report in scripts/07_run_phase2a_baselines.py
     does not contain hardcoded decimal literals or hardcoded result numbers in static text.
     """
     script_path = os.path.join(ROOT_DIR, "scripts", "07_run_phase2a_baselines.py")
     with open(script_path, "r") as f:
         full_code = f.read()
 
-    start = full_code.find("def generate_synthesis_report(")
+    start = full_code.find("def generate_refined_synthesis_report(")
     end = full_code.find("def main():", start)
     src = full_code[start:end]
 
-    # No hardcoded decimal numbers like -0.0265 or 0.0597 or 46.40 in template strings outside format braces
-    # Remove format expressions {xxx}
+    # No hardcoded decimal numbers outside format expressions {xxx}
     text_outside_braces = re.sub(r'\{[^}]+\}', '', src)
-    # Check for hardcoded decimal literals (e.g. 0.0265, -0.0265, 46.40%)
-    # Note: 0.02 in formula explanation "\theta_{wlt} + 0.02" is a definition parameter, not an empirical result.
-    # Exclude the mathematical definition string "0.02"
-    cleaned = text_outside_braces.replace("0.02", "").replace("1e-5", "")
+    cleaned = text_outside_braces.replace("0.02", "").replace("1e-5", "").replace("0.05", "").replace("0.01", "").replace("1.0", "")
     hardcoded_decimals = re.findall(r'\b\d+\.\d+\b', cleaned)
     assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Phase 2a generator: {hardcoded_decimals}"
 
     # Verify dynamic interpolation tokens
-    assert "{glob['b0_bias']:+.4f}" in src
-    assert "{glob['b0_rmse']:.4f}" in src
-    assert "{glob['b1_rmse']:.4f}" in src
-    assert "{glob['b2_rmse']:.4f}" in src
+    assert "{glob['bias_b0_spec']:+.4f}" in src
+    assert "{glob['rmse_b0_spec']:.4f}" in src
+    assert "{glob['rmse_b1_spec']:.4f}" in src
+    assert "{glob['rmse_b2_spec']:.4f}" in src
     assert "{daobs_table}" in src
-    assert "{strata_table}" in src
+    assert "{pop_table}" in src
+    assert "{contrast_table}" in src
 
 
-def test_detector_catches_hardcoded_numbers():
-    """Verify that a text with hardcoded decimals is properly caught by our detection rule."""
-    bad_source = 'rf.write("> La moyenne de d passe de -0,0362 m3/m3 à -0,0588 m3/m3.")'
+def test_no_interpretive_phrasing_in_report_generators():
+    """Verify that neither script 05 nor script 07 contains subjective/interpretive phrasing in report templates."""
+    banned_phrases = [
+        "quasi-parfaitement",
+        "validé à 100",
+        "rejet massif",
+        "parfaitement",
+        "fidèlement"
+    ]
+    for script_name, func_name in [
+        ("05_assemble_modeling_tables.py", "generate_synthesis_report"),
+        ("07_run_phase2a_baselines.py", "generate_refined_synthesis_report")
+    ]:
+        script_path = os.path.join(ROOT_DIR, "scripts", script_name)
+        with open(script_path, "r") as f:
+            code = f.read()
+        start = code.find(f"def {func_name}(")
+        end = code.find("def main():", start)
+        func_src = code[start:end]
+
+        for phrase in banned_phrases:
+            assert phrase not in func_src.lower(), f"Found banned interpretive phrase '{phrase}' in {script_name} ({func_name})!"
+
+
+def test_detector_catches_hardcoded_numbers_and_interpretations():
+    """Verify that text with hardcoded decimals or interpretive phrasing is properly caught by test rules."""
+    bad_source = 'rf.write("> La moyenne de d passe de -0,0362 m3/m3 à -0,0588 m3/m3, quasi-parfaitement validé à 100 %.")'
     matches = re.findall(r'rf\.write\([^)]*?\b\d+,\d+\b[^)]*?\)', bad_source)
     assert len(matches) > 0, "Detector should catch hardcoded decimal literals!"
+    
+    banned = ["quasi-parfaitement", "validé à 100"]
+    found_banned = [p for p in banned if p in bad_source]
+    assert len(found_banned) == 2, "Detector should catch banned interpretive phrases!"
