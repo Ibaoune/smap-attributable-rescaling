@@ -187,4 +187,8 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
      - Métriques obligatoires : Biais ($d_{\mathrm{res}} = \mathrm{SMAP}^* - \mathrm{SSM}_{\mathrm{OL}}$), RMSE, ubRMSE, corrélation avec l'open loop ($r_{\mathrm{SMAP}^* \mathrm{vs} \mathrm{OL}}$), corrélation d'anomalies temporelles avec SMAP brut ($r_{\mathrm{anom}}$), part d'observations assimilables et part de rejets au flétrissement.
      - Contraste dynamique GMIA (Clay Loam JJA, $>30\,\%$ vs $0\,\%$) avec intervalle de confiance à 95 % par bootstrap sur blocs spatiaux de 1° ($B=500$) et décompte des blocs distincts.
      - Stratification saisonnière intégrale (DJF, MAM, JJA, SON, Annuel).
-- **Statut** : Proposée (en attente d'accord utilisateur avant déverrouillage de 2020).
+  6. **Modalités d'exécution sur l'année de test 2020 scellée** :
+     - Le test 2020 utilise les modèles déjà entraînés sur 2016–2018, sans réentraînement ni changement d'hyperparamètres ; la référence est le CDF B2-train existant (2016-01-01 → 2019-01-01).
+     - Critère de succès fixé avant ouverture : V2 bat B2-train sur le biais absolu et sur r_anom_with_smap_raw, sur l'échantillon spécifique et sur l'échantillon commun, et la RMSE sur l'échantillon commun ne dépasse pas celle de B2-train de plus de 5 %.
+     - 2020 est ouvert une seule fois ; aucune modification de code, de groupes ou de seuils après ouverture ; un résultat défavorable est rapporté tel quel.
+- **Statut** : Actée.

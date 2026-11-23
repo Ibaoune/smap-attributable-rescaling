@@ -353,8 +353,8 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, col
             r_intra_rep, _ = spearmanr(fold_shaps_arr[fa][group_dict['context_representation']], fold_shaps_arr[fb][group_dict['context_representation']])
             r_intra_proc, _ = spearmanr(fold_shaps_arr[fa][group_dict['context_process']], fold_shaps_arr[fb][group_dict['context_process']])
             
-            matrix_spearman[fa, fb] = r_all
-            matrix_spearman[fb, fa] = r_all
+            matrix_spearman[fa, fb] = r_top15
+            matrix_spearman[fb, fa] = r_top15
             stability_records.append({
                 'fold_a': fa,
                 'fold_b': fb,
@@ -401,6 +401,9 @@ def train_full_model(train_df, feature_cols, n_jobs=8):
     )
     model.fit(X_train, y_train)
     print(f"Full LightGBM model trained on {len(X_train):,} samples in {time.time()-t0:.2f}s")
+    model_path = os.path.join(INTERIM_DIR, "lgb_model_2016_2018.txt")
+    model.booster_.save_model(model_path)
+    print(f"Saved trained LightGBM model to {model_path}")
     return model
 
 
@@ -492,6 +495,11 @@ def learn_b1_climatology():
     )
     global_fallback = float(full_train['target_d'].mean())
     print(f"B1 Climatology learned on all {len(full_train):,} rows across 2016-2018 in {time.time()-t0:.1f}s")
+    b1_clim_path = os.path.join(INTERIM_DIR, "b1_climatology_2016_2018.csv")
+    b1_pix_path = os.path.join(INTERIM_DIR, "b1_pixel_fallback_2016_2018.csv")
+    b1_clim_table.to_csv(b1_clim_path, index=False)
+    b1_pixel_table.to_csv(b1_pix_path, index=False)
+    print(f"Saved B1 climatology tables to {b1_clim_path} and {b1_pix_path}")
     return b1_clim_table, b1_pixel_table, global_fallback
 
 
