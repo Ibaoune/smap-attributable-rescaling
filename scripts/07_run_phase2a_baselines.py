@@ -442,8 +442,10 @@ def compute_gmia_contrast_with_bootstrap(df_2019):
 
                 n_obs_0 = len(sub_0)
                 n_px_0 = int(sub_0['pixel_id'].nunique())
+                n_blocks_0 = int(sub_0['spatial_block_id'].nunique())
                 n_obs_gt30 = len(sub_gt30)
                 n_px_gt30 = int(sub_gt30['pixel_id'].nunique())
+                n_blocks_gt30 = int(sub_gt30['spatial_block_id'].nunique())
 
                 mean_0 = float(sub_0[col_res].mean()) if n_obs_0 > 0 else np.nan
                 mean_gt30 = float(sub_gt30[col_res].mean()) if n_obs_gt30 > 0 else np.nan
@@ -451,6 +453,7 @@ def compute_gmia_contrast_with_bootstrap(df_2019):
 
                 # Block bootstrap on 1° spatial blocks
                 sub_both = sub_ref[sub_ref['gmia_class'].isin(['0%', '>30%'])]
+                n_blocks_total = int(sub_both['spatial_block_id'].nunique())
                 if n_obs_0 >= 10 and n_obs_gt30 >= 10 and sub_both['spatial_block_id'].nunique() > 1:
                     stats = sub_both.groupby(['spatial_block_id', 'gmia_class'])[col_res].agg(['sum', 'count']).unstack('gmia_class').fillna(0)
                     sum_0_arr = stats[('sum', '0%')].values if ('sum', '0%') in stats else np.zeros(len(stats))
@@ -478,8 +481,11 @@ def compute_gmia_contrast_with_bootstrap(df_2019):
 
                 entry[f'{ref}_n_obs_0'] = n_obs_0
                 entry[f'{ref}_n_px_0'] = n_px_0
+                entry[f'{ref}_n_blocks_0'] = n_blocks_0
                 entry[f'{ref}_n_obs_gt30'] = n_obs_gt30
                 entry[f'{ref}_n_px_gt30'] = n_px_gt30
+                entry[f'{ref}_n_blocks_gt30'] = n_blocks_gt30
+                entry[f'{ref}_n_blocks_total'] = n_blocks_total
                 entry[f'{ref}_contrast'] = contrast
                 entry[f'{ref}_ci_low'] = ci_low
                 entry[f'{ref}_ci_high'] = ci_high
@@ -672,9 +678,9 @@ def generate_refined_synthesis_report(metrics_df, b2_missing_df, contrast_df, an
     for _, c_row in contrast_df.iterrows():
         contrast_rows.append(
             f"| {c_row['texture']} | {c_row['season']} | {c_row['sample_type']} | "
-            f"{c_row['b0_contrast']:+.4f} [{c_row['b0_ci_low']:+.4f}, {c_row['b0_ci_high']:+.4f}] ({c_row['b0_n_px_gt30']}/{c_row['b0_n_px_0']} px) | "
-            f"{c_row['b1_contrast']:+.4f} [{c_row['b1_ci_low']:+.4f}, {c_row['b1_ci_high']:+.4f}] ({c_row['b1_n_px_gt30']}/{c_row['b1_n_px_0']} px) | "
-            f"{c_row['b2_contrast']:+.4f} [{c_row['b2_ci_low']:+.4f}, {c_row['b2_ci_high']:+.4f}] ({c_row['b2_n_px_gt30']}/{c_row['b2_n_px_0']} px) |"
+            f"{c_row['b0_contrast']:+.4f} [{c_row['b0_ci_low']:+.4f}, {c_row['b0_ci_high']:+.4f}] ({c_row['b0_n_px_gt30']}/{c_row['b0_n_px_0']} px, {c_row['b0_n_blocks_gt30']}/{c_row['b0_n_blocks_0']} blk) | "
+            f"{c_row['b1_contrast']:+.4f} [{c_row['b1_ci_low']:+.4f}, {c_row['b1_ci_high']:+.4f}] ({c_row['b1_n_px_gt30']}/{c_row['b1_n_px_0']} px, {c_row['b1_n_blocks_gt30']}/{c_row['b1_n_blocks_0']} blk) | "
+            f"{c_row['b2_contrast']:+.4f} [{c_row['b2_ci_low']:+.4f}, {c_row['b2_ci_high']:+.4f}] ({c_row['b2_n_px_gt30']}/{c_row['b2_n_px_0']} px, {c_row['b2_n_blocks_gt30']}/{c_row['b2_n_blocks_0']} blk) |"
         )
     contrast_table = "\n".join(contrast_rows)
 

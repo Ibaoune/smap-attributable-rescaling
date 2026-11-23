@@ -74,7 +74,8 @@ def test_no_interpretive_phrasing_in_report_generators():
     ]
     for script_name, func_name in [
         ("05_assemble_modeling_tables.py", "generate_synthesis_report"),
-        ("07_run_phase2a_baselines.py", "generate_refined_synthesis_report")
+        ("07_run_phase2a_baselines.py", "generate_refined_synthesis_report"),
+        ("08_diagnose_dynamic_irrigation.py", "generate_markdown_report")
     ]:
         script_path = os.path.join(ROOT_DIR, "scripts", script_name)
         with open(script_path, "r") as f:
@@ -96,3 +97,53 @@ def test_detector_catches_hardcoded_numbers_and_interpretations():
     banned = ["quasi-parfaitement", "validé à 100"]
     found_banned = [p for p in banned if p in bad_source]
     assert len(found_banned) == 2, "Detector should catch banned interpretive phrases!"
+
+
+def test_no_hardcoded_decimal_literals_in_phase2a_bis_report_generator():
+    """Verify that generate_markdown_report in scripts/08_diagnose_dynamic_irrigation.py
+    does not contain hardcoded decimal literals or hardcoded result numbers in static text.
+    """
+    script_path = os.path.join(ROOT_DIR, "scripts", "08_diagnose_dynamic_irrigation.py")
+    with open(script_path, "r") as f:
+        full_code = f.read()
+
+    start = full_code.find("def generate_markdown_report(")
+    end = full_code.find("def main():", start)
+    src = full_code[start:end]
+
+    text_outside_braces = re.sub(r'\{[^}]+\}', '', src)
+    cleaned = text_outside_braces.replace("1.0", "").replace("0.03", "").replace("0.02", "").replace("0.04", "").replace("0.5", "")
+    hardcoded_decimals = re.findall(r'\d+\.\d+', cleaned)
+    assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Phase 2a-bis generator: {hardcoded_decimals}"
+
+    assert "{table_cl_jja}" in src
+    assert "{table_loam_jja}" in src
+    assert "{table_months}" in src
+    assert "{table_sens}" in src
+
+
+def test_no_hardcoded_decimal_literals_in_phase2b_report_generator():
+    """Verify that generate_rf_report in scripts/09_train_phase2b_random_forest.py
+    does not contain hardcoded decimal literals or hardcoded result numbers in static text.
+    """
+    script_path = os.path.join(ROOT_DIR, "scripts", "09_train_phase2b_random_forest.py")
+    with open(script_path, "r") as f:
+        full_code = f.read()
+
+    start = full_code.find("def generate_rf_report(")
+    end = full_code.find("def main():", start)
+    src = full_code[start:end]
+
+    text_outside_braces = re.sub(r"\{[^}]+\}", "", src)
+    cleaned = text_outside_braces.replace("1.0", "").replace("0.02", "").replace("0.01", "")
+    hardcoded_decimals = re.findall(r"\b\d+\.\d+\b", cleaned)
+    assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Phase 2b generator: {hardcoded_decimals}"
+
+    assert "{cv_table}" in src
+    assert "{shap_table}" in src
+    assert "{pop_table}" in src
+    assert "{glob_metrics_table}" in src
+    assert "{season_table}" in src
+    assert "{anom_table}" in src
+    assert "{contrast_table}" in src
+    assert "{wlt_table}" in src

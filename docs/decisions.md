@@ -89,3 +89,30 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
   - Conversion d'unité : passage du pourcentage $[0, 100\,\%]$ à une fraction adimensionnelle $[0, 1]$ (`irrigfrac_gmia = gmia_5km / 100.0`).
 - **Validation** : La grille interpolée présente une moyenne de 0,0255 (2,55 %) sur NorthMor, avec un maximum de 0,9550 (95,50 % dans le bassin du Gharb/Sebou).
 - **Statut** : Acté.
+
+---
+
+## Décision 9 : Diagnostic du Signal d'Irrigation Dynamique (Événements d'Humidification sans Pluie)
+- **Contexte** : Dans la Phase 2a, le contraste statique GMIA >30% vs 0% sur l'écart $d = \text{SMAP} - \text{OL}$ révèle une signature d'irrigation estivale. Pour isoler la dynamique événementielle des arrosages agricoles indépendamment du biais moyen, un diagnostic temporel d'« humidification sans pluie » est nécessaire.
+- **Décision** :
+  1. **Définition de l'événement** : Paires d'observations satellitaires SMAP consécutives du même passage orbital (AM–AM ou PM–PM), séparées d'au plus 3 jours ($1 \le \Delta t \le 3$), satisfaisant simultanément :
+     - Hausse de l'humidité du sol : $\Delta\text{SM} = \text{SM}(t) - \text{SM}(t - \Delta t) > \text{seuil}_{\text{SM}}$ (par défaut 0,03 m³/m³).
+     - Précipitation IMERG cumulée sur l'intervalle $[t - \Delta t, t]$ : $P_{\text{cum}} < \text{seuil}_{P}$ (par défaut 1,0 mm).
+  2. **Témoin modèle (Open Loop Noah-MP)** : Le même diagnostic est appliqué strictement sur la série temporelle de l'OL (`ssm_ol_daily`). Noah-MP étant simulé sans module d'irrigation (`noirr`), ce témoin permet de valider le comportement hydrologique attendu (zéro réhumidification sans apport pluviométrique).
+  3. **Stratification et incertitudes** : Calcul de la fréquence d'occurrence par classe GMIA (0%, 0-10%, 10-30%, >30%) $\times$ texture $\times$ mois. Intervalles de confiance à 95% calculés par bootstrap par blocs spatiaux de 1° (500 itérations), avec décompte systématique des mailles et des blocs distincts.
+  4. **Sensibilité** : Test de deux autres jeux de seuils (laxe : 0,02 m³/m³ et 1,0 mm ; strict : 0,04 m³/m³ et 0,5 mm) configurés dans `configs/irrigation_diagnostic.yaml`.
+- **Statut** : Acté.
+
+---
+
+## Décision 10 : Protocole d'Entraînement et de Rescaling Attribuable Phase 2b (Random Forest)
+- **Contexte** : Apprentissage du premier modèle de correction supervisée explicable alternative au CDF matching (Jalon H4).
+- **Décision** :
+  1. **Population d'entraînement (2016–2018)** : Observations passant l'ensemble des contrôles de qualité (QC) de LIS DA à l'exclusion de la règle de flétrissement.
+  2. **Sous-échantillonnage stratifié spatialement** : Pour pallier l'hétérogénéité orbitale et la disparité des masquages QC entre cellules, un échantillonnage aléatoire stratifié uniforme de 20 observations par pixel est appliqué sur 2016–2018 (10 par an maximum).
+  3. **Validation croisée spatiale équilibrée** : 5 plis spatiaux constitués de blocs de 1° regroupés par compacité géographique et équilibrés en effectif, garantissant une étanchéité spatiale complète (zéro fuite d'autocorrélation).
+  4. **Formulation du Rescaling Attribuable (SAR)** :
+     - Modèle principal (SAR main) : $\text{SMAP}^* = \text{SMAP} - (\Phi_{\text{removable}} + \phi_0)$. Le groupe `retained` (dont `irrigfrac_gmia` et les écarts pluviométriques) est conservé intact dans l'observation corrigée.
+     - Variante de sensibilité : $\text{SMAP}^*_{\text{ctx}} = \text{SMAP} - (\Phi_{\text{removable}} + \Phi_{\text{context}} + \phi_0)$, permettant de quantifier l'impact du retrait du contexte temporel/modèle.
+  5. **Recalcul du flétrissement et protocole d'évaluation** : La règle $\text{SMAP}^* < \theta_{\text{wlt}} + 0.02$ est recalculée pour chaque observation corrigée sur l'année de validation 2019 (`split == 'val'`). Évaluation strictement identique au protocole Phase 2a (échantillons spécifique et commun à B0/B1/B2/RF/RF-ctx). Année 2020 scellée.
+- **Statut** : Acté.

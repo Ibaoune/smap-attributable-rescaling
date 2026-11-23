@@ -1,0 +1,21 @@
+# configs/irrigation_diagnostic.yaml
+# Configuration thresholds for Phase 2a-bis dynamic irrigation diagnostic (2016-2019, 2020 sealed)
+
+thresholds:
+  default:
+    name: 'default'
+    delta_sm_min: 0.03   # m3/m3
+    rain_imerg_max: 1.0  # mm
+    max_days_gap: 3      # days
+
+  sensitivity_lax:
+    name: 'lax'
+    delta_sm_min: 0.02   # m3/m3
+    rain_imerg_max: 1.0  # mm
+    max_days_gap: 3      # days
+
+  sensitivity_strict:
+    name: 'strict'
+    delta_sm_min: 0.04   # m3/m3
+    rain_imerg_max: 0.5  # mm
+    max_days_gap: 3      # days
