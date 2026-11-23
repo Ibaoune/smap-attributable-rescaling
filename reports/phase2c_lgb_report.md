@@ -1,10 +1,10 @@
 # Rapport de Phase 2c : Correction Attribuable LightGBM et TreeSHAP Exact
 
-**Date d'exécution :** 2026-11-23 16:27:59  
+**Date d'exécution :** 2026-11-23 18:45:19  
 **Période d'entraînement :** 2016-01-01 au 2018-12-31 (scindée en 5 plis spatiaux de 1°)  
 **Période d'évaluation :** 2019-01-01 au 2019-12-31 (année 2019 scellée au préalable)  
 **Année 2020 :** Strictement scellée (aucune lecture, aucune inférence)  
-**Population d'entraînement :** Échantillon stratifié de 100 observations par pixel tirées aléatoirement parmi les observations QC-valides (hors flétrissement) sur 2016–2018.  
+**Population d'entraînement :** Échantillon stratifié d'au plus 100 observations par pixel sans remise parmi les observations non-wilt QC-valides sur 2016–2018 (min : 100, médiane : 100.0, 0 pixels sous 100 obs sur 14,250 pixels, 1,425,000 lignes au total).  
 **Algorithme principal :** LightGBM (300 arbres, learning_rate=0,05, num_leaves=63)  
 **Gestion des valeurs manquantes :** Traitement natif des NaN par LightGBM pour la rugosité (`roughness_coefficient`), sans imputation par zéro, complété par l'indicateur binaire `roughness_is_nan`.  
 **Méthode d'attribution :** TreeSHAP EXACT natif (`pred_contrib=True`), aucune approximation de Saabas.  
@@ -24,16 +24,16 @@ Le dictionnaire `configs/predictors.yaml` structure l'ensemble des 66 variables 
 
 ## 2. Validation croisée spatiale (5 plis de 1°)
 
-Validation sur blocs spatiaux disjoints de 1° avec calcul du TreeSHAP exact sur au moins 25 000 observations de validation par pli :
+Validation croisée sur les 5 plis spatiaux équilibrés de 1° (`spatial_fold`, Décision 7) avec calcul du TreeSHAP exact sur au moins 25 000 observations de validation par pli :
 
 | Pli | Taille Train | Taille Val | RMSE Val | Pearson r | Biais Val |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Pli 0 | 1,152,800 | 272,200 | 0.0178 m³/m³ | 0.9514 | +0.0037 m³/m³ |
-| Pli 1 | 1,095,100 | 329,900 | 0.0230 m³/m³ | 0.9181 | -0.0021 m³/m³ |
-| Pli 2 | 1,150,900 | 274,100 | 0.0249 m³/m³ | 0.8885 | -0.0006 m³/m³ |
-| Pli 3 | 1,154,400 | 270,600 | 0.0227 m³/m³ | 0.9254 | -0.0045 m³/m³ |
-| Pli 4 | 1,146,800 | 278,200 | 0.0181 m³/m³ | 0.9420 | +0.0027 m³/m³ |
-| **Moyenne** | — | — | **0.0213 m³/m³** | **0.9251** | — |
+| Pli 0 | 1,132,300 | 292,700 | 0.0212 m³/m³ | 0.9292 | -0.0020 m³/m³ |
+| Pli 1 | 1,142,000 | 283,000 | 0.0214 m³/m³ | 0.9339 | -0.0014 m³/m³ |
+| Pli 2 | 1,150,800 | 274,200 | 0.0220 m³/m³ | 0.9114 | -0.0007 m³/m³ |
+| Pli 3 | 1,135,400 | 289,600 | 0.0206 m³/m³ | 0.9246 | -0.0002 m³/m³ |
+| Pli 4 | 1,139,500 | 285,500 | 0.0224 m³/m³ | 0.9095 | +0.0025 m³/m³ |
+| **Moyenne** | — | — | **0.0215 m³/m³** | **0.9217** | — |
 
 ---
 
@@ -43,47 +43,47 @@ Validation sur blocs spatiaux disjoints de 1° avec calcul du TreeSHAP exact sur
 
 | Groupe | Contribution Absolue Moyenne | Pli 0 | Pli 1 | Pli 2 | Pli 3 | Pli 4 | Rang Moyen | Spearman intra-groupe moyen |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `removable` | 0.0190 m³/m³ | 2 | 2 | 2 | 2 | 2 | 2.00 | 0.9722 |
-| `retained` | 0.0054 m³/m³ | 4 | 4 | 4 | 4 | 4 | 4.00 | 1.0000 |
-| `context_representation` | 0.0378 m³/m³ | 1 | 1 | 1 | 1 | 1 | 1.00 | 0.8800 |
-| `context_process` | 0.0075 m³/m³ | 3 | 3 | 3 | 3 | 3 | 3.00 | 0.8452 |
+| `context_representation` | 0.0431 m³/m³ | 1 | 1 | 1 | 1 | 1 | 1.00 | 0.8800 |
+| `removable` | 0.0396 m³/m³ | 2 | 2 | 2 | 2 | 2 | 2.00 | 0.9709 |
+| `context_process` | 0.0148 m³/m³ | 3 | 3 | 3 | 3 | 3 | 3.00 | 0.8476 |
+| `retained` | 0.0072 m³/m³ | 4 | 4 | 4 | 4 | 4 | 4.00 | 0.9786 |
 | **Moyenne groupes** | — | — | — | — | — | — | — | **1.0000** |
 
 ### 3.2 Rangs des 15 variables principales à travers les plis
 
 | Rang | Variable | Rang Moyen | Pli 0 | Pli 1 | Pli 2 | Pli 3 | Pli 4 | SHAP Absolu Moyen |
 | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| 1 | `ssm_lag1` | 1.00 | 1 | 1 | 1 | 1 | 1 | 0.0314 |
-| 2 | `roughness_coefficient` | 2.00 | 2 | 2 | 2 | 2 | 2 | 0.0127 |
-| 3 | `vegetation_water_content` | 3.60 | 3 | 4 | 3 | 3 | 5 | 0.0059 |
-| 4 | `doy_sin` | 4.00 | 5 | 3 | 4 | 4 | 4 | 0.0055 |
-| 5 | `ssm_rel_wilt_ref_lag1` | 5.20 | 4 | 9 | 5 | 5 | 3 | 0.0056 |
-| 6 | `pass_is_pm` | 5.80 | 6 | 5 | 6 | 6 | 6 | 0.0045 |
-| 7 | `vegetation_opacity` | 7.00 | 7 | 6 | 7 | 8 | 7 | 0.0037 |
-| 8 | `surface_temperature` | 8.00 | 10 | 7 | 8 | 7 | 8 | 0.0033 |
-| 9 | `sm_layer3_lag1` | 9.40 | 8 | 11 | 9 | 10 | 9 | 0.0030 |
-| 10 | `lai_lag1` | 10.20 | 9 | 8 | 15 | 9 | 10 | 0.0030 |
-| 11 | `sm_layer4_lag1` | 10.80 | 12 | 10 | 10 | 11 | 11 | 0.0027 |
-| 12 | `et_lag1` | 12.00 | 11 | 12 | 11 | 14 | 12 | 0.0023 |
-| 13 | `precip_mswep` | 13.00 | 13 | 14 | 12 | 13 | 13 | 0.0020 |
-| 14 | `doy_cos` | 14.60 | 14 | 15 | 13 | 15 | 16 | 0.0019 |
-| 15 | `precip_3d_sum` | 15.80 | 15 | 17 | 16 | 16 | 15 | 0.0017 |
+| 1 | `ssm_lag1` | 1.00 | 1 | 1 | 1 | 1 | 1 | 0.0296 |
+| 2 | `roughness_coefficient` | 2.00 | 2 | 2 | 2 | 2 | 2 | 0.0126 |
+| 3 | `vegetation_water_content` | 3.40 | 3 | 3 | 3 | 4 | 4 | 0.0062 |
+| 4 | `ssm_rel_wilt_ref_lag1` | 4.20 | 5 | 5 | 5 | 3 | 3 | 0.0059 |
+| 5 | `doy_sin` | 4.40 | 4 | 4 | 4 | 5 | 5 | 0.0056 |
+| 6 | `pass_is_pm` | 6.00 | 6 | 6 | 6 | 6 | 6 | 0.0045 |
+| 7 | `vegetation_opacity` | 7.80 | 7 | 7 | 8 | 7 | 10 | 0.0036 |
+| 8 | `surface_temperature` | 8.60 | 9 | 8 | 10 | 8 | 8 | 0.0034 |
+| 9 | `lai_lag1` | 9.40 | 10 | 9 | 9 | 12 | 7 | 0.0032 |
+| 10 | `sm_layer4_lag1` | 9.80 | 11 | 11 | 7 | 9 | 11 | 0.0030 |
+| 11 | `sm_layer3_lag1` | 9.80 | 8 | 10 | 12 | 10 | 9 | 0.0031 |
+| 12 | `et_lag1` | 12.00 | 12 | 12 | 11 | 11 | 14 | 0.0024 |
+| 13 | `precip_mswep` | 13.20 | 13 | 13 | 14 | 13 | 13 | 0.0021 |
+| 14 | `doy_cos` | 14.40 | 15 | 14 | 13 | 15 | 15 | 0.0019 |
+| 15 | `precip_3d_sum` | 16.00 | 16 | 15 | 17 | 16 | 16 | 0.0016 |
 
 ### 3.3 Matrice de corrélation de Spearman entre plis
 
 | Paire de plis | Spearman $\rho$ (4 Groupes) | Spearman $\rho$ (Top 15) | Spearman $\rho$ (Toutes les 66 variables) |
 | :--- | :--- | :--- | :--- |
-| Pli 0 vs Pli 1 | 1.0000 | 0.9000 (p=4.87e-06) | 0.9819 (p=5.50e-48) |
-| Pli 0 vs Pli 2 | 1.0000 | 0.9321 (p=4.24e-07) | 0.9843 (p=6.22e-50) |
-| Pli 0 vs Pli 3 | 1.0000 | 0.9607 (p=1.30e-08) | 0.9860 (p=1.75e-51) |
-| Pli 0 vs Pli 4 | 1.0000 | 0.9714 (p=1.69e-09) | 0.9820 (p=5.11e-48) |
-| Pli 1 vs Pli 2 | 1.0000 | 0.8857 (p=1.12e-05) | 0.9838 (p=1.83e-49) |
-| Pli 1 vs Pli 3 | 1.0000 | 0.9500 (p=6.09e-08) | 0.9853 (p=8.38e-51) |
-| Pli 1 vs Pli 4 | 1.0000 | 0.9071 (p=3.06e-06) | 0.9803 (p=7.92e-47) |
-| Pli 2 vs Pli 3 | 1.0000 | 0.9393 (p=2.09e-07) | 0.9790 (p=5.97e-46) |
-| Pli 2 vs Pli 4 | 1.0000 | 0.9429 (p=1.42e-07) | 0.9699 (p=5.34e-41) |
-| Pli 3 vs Pli 4 | 1.0000 | 0.9714 (p=1.69e-09) | 0.9818 (p=6.84e-48) |
-| **Moyenne** | **1.0000** | **0.9361** | **0.9814** |
+| Pli 0 vs Pli 1 | 1.0000 | 0.9893 (p=3.00e-12) | 0.9846 (p=3.65e-50) |
+| Pli 0 vs Pli 2 | 1.0000 | 0.9321 (p=4.24e-07) | 0.9863 (p=7.42e-52) |
+| Pli 0 vs Pli 3 | 1.0000 | 0.9643 (p=7.07e-09) | 0.9893 (p=3.63e-55) |
+| Pli 0 vs Pli 4 | 1.0000 | 0.9500 (p=6.09e-08) | 0.9792 (p=4.76e-46) |
+| Pli 1 vs Pli 2 | 1.0000 | 0.9500 (p=6.09e-08) | 0.9798 (p=1.91e-46) |
+| Pli 1 vs Pli 3 | 1.0000 | 0.9643 (p=7.07e-09) | 0.9909 (p=1.93e-57) |
+| Pli 1 vs Pli 4 | 1.0000 | 0.9607 (p=1.30e-08) | 0.9728 (p=2.37e-42) |
+| Pli 2 vs Pli 3 | 1.0000 | 0.9464 (p=9.45e-08) | 0.9828 (p=1.08e-48) |
+| Pli 2 vs Pli 4 | 1.0000 | 0.9071 (p=3.06e-06) | 0.9727 (p=2.48e-42) |
+| Pli 3 vs Pli 4 | 1.0000 | 0.9214 (p=1.07e-06) | 0.9757 (p=6.81e-44) |
+| **Moyenne** | **1.0000** | **0.9486** | **0.9814** |
 
 ---
 
@@ -98,11 +98,11 @@ Les 3 variantes de correction appliquent la décomposition additive :
 
 | Saison | Nombre d'obs | V1 : Correction | V1 : Biais $d_{\mathrm{res}}$ | V2 : Correction | V2 : Biais $d_{\mathrm{res}}$ | V3 : Correction | V3 : Biais $d_{\mathrm{res}}$ | B2-train : Correction | B2-train : Biais $d_{\mathrm{res}}$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| DJF | 994,881 | +0.0405 m³/m³ | -0.0132 m³/m³ | +0.0568 m³/m³ | +0.0031 m³/m³ | +0.0558 m³/m³ | +0.0022 m³/m³ | +0.0709 m³/m³ | +0.0162 m³/m³ |
-| MAM | 1,029,610 | +0.0448 m³/m³ | -0.0140 m³/m³ | +0.0608 m³/m³ | +0.0020 m³/m³ | +0.0622 m³/m³ | +0.0034 m³/m³ | +0.0652 m³/m³ | +0.0046 m³/m³ |
-| JJA | 638,878 | +0.0451 m³/m³ | +0.0399 m³/m³ | +0.0052 m³/m³ | +0.0000 m³/m³ | +0.0028 m³/m³ | -0.0024 m³/m³ | +0.0061 m³/m³ | +0.0007 m³/m³ |
-| SON | 997,430 | +0.0469 m³/m³ | +0.0206 m³/m³ | +0.0352 m³/m³ | +0.0089 m³/m³ | +0.0312 m³/m³ | +0.0049 m³/m³ | +0.0441 m³/m³ | +0.0170 m³/m³ |
-| Annual | 3,660,799 | +0.0443 m³/m³ | +0.0051 m³/m³ | +0.0430 m³/m³ | +0.0038 m³/m³ | +0.0416 m³/m³ | +0.0025 m³/m³ | +0.0505 m³/m³ | +0.0103 m³/m³ |
+| DJF | 994,881 | +0.0406 m³/m³ | -0.0130 m³/m³ | +0.0569 m³/m³ | +0.0033 m³/m³ | +0.0561 m³/m³ | +0.0024 m³/m³ | +0.0709 m³/m³ | +0.0162 m³/m³ |
+| MAM | 1,029,610 | +0.0449 m³/m³ | -0.0139 m³/m³ | +0.0606 m³/m³ | +0.0018 m³/m³ | +0.0622 m³/m³ | +0.0034 m³/m³ | +0.0652 m³/m³ | +0.0046 m³/m³ |
+| JJA | 638,878 | +0.0451 m³/m³ | +0.0399 m³/m³ | +0.0053 m³/m³ | +0.0001 m³/m³ | +0.0027 m³/m³ | -0.0025 m³/m³ | +0.0061 m³/m³ | +0.0007 m³/m³ |
+| SON | 997,430 | +0.0470 m³/m³ | +0.0207 m³/m³ | +0.0352 m³/m³ | +0.0089 m³/m³ | +0.0310 m³/m³ | +0.0047 m³/m³ | +0.0441 m³/m³ | +0.0170 m³/m³ |
+| Annual | 3,660,799 | +0.0443 m³/m³ | +0.0052 m³/m³ | +0.0430 m³/m³ | +0.0039 m³/m³ | +0.0416 m³/m³ | +0.0025 m³/m³ | +0.0505 m³/m³ | +0.0103 m³/m³ |
 
 ---
 
@@ -118,21 +118,21 @@ Le flétrissement ($\mathrm{SMAP}^* \ge \theta_{\mathrm{wlt}} + 0{,}02$) est rec
 | B1_Climatology | 3,133,497 (85.6%) | 527,302 (14.4%) | +0.0132 m³/m³ | 0.0427 m³/m³ | 0.0406 m³/m³ | 0.7605 | 1.0000 | +0.0046 [+0.0003, +0.0093] (interprétable) |
 | B2_CDF_Legacy | 2,622,380 (71.6%) | 652,539 (17.8%) | +0.0086 m³/m³ | 0.0354 m³/m³ | 0.0343 m³/m³ | 0.8040 | 0.8009 | +0.0010 [-0.0004, +0.0031] (interprétable) |
 | B2_train_CDF | 2,787,534 (76.1%) | 596,740 (16.3%) | +0.0168 m³/m³ | 0.0433 m³/m³ | 0.0399 m³/m³ | 0.7451 | 0.7801 | +0.0026 [+0.0003, +0.0048] (interprétable) |
-| LGB_V1_Removable | 3,517,036 (96.1%) | 143,763 (3.9%) | +0.0074 m³/m³ | 0.0484 m³/m³ | 0.0478 m³/m³ | 0.6248 | 0.9667 | +0.0041 [-0.0005, +0.0108] (interprétable) |
-| LGB_V2_Rem_ContextRep | 2,843,830 (77.7%) | 816,969 (22.3%) | +0.0059 m³/m³ | 0.0310 m³/m³ | 0.0305 m³/m³ | 0.8640 | 0.8780 | +0.0029 [-0.0030, +0.0105] (interprétable) |
-| LGB_V3_Rem_AllContext | 2,787,716 (76.2%) | 873,083 (23.8%) | +0.0049 m³/m³ | 0.0283 m³/m³ | 0.0279 m³/m³ | 0.8903 | 0.8596 | +0.0019 [-0.0019, +0.0068] (interprétable) |
+| LGB_V1_Removable | 3,518,155 (96.1%) | 142,644 (3.9%) | +0.0075 m³/m³ | 0.0484 m³/m³ | 0.0478 m³/m³ | 0.6246 | 0.9667 | +0.0043 [-0.0005, +0.0112] (interprétable) |
+| LGB_V2_Rem_ContextRep | 2,848,005 (77.8%) | 812,794 (22.2%) | +0.0059 m³/m³ | 0.0311 m³/m³ | 0.0305 m³/m³ | 0.8638 | 0.8783 | +0.0030 [-0.0033, +0.0106] (interprétable) |
+| LGB_V3_Rem_AllContext | 2,787,172 (76.1%) | 873,627 (23.9%) | +0.0049 m³/m³ | 0.0283 m³/m³ | 0.0278 m³/m³ | 0.8910 | 0.8589 | +0.0010 [-0.0028, +0.0062] (interprétable) |
 
-### 5.2 Échantillon commun (1,523,435 observations assimilables par toutes les références)
+### 5.2 Échantillon commun (1,521,751 observations assimilables par toutes les références)
 
 | Référence | Observations assimilables | Rejets flétrissement | Biais ($d_{\mathrm{res}} = \mathrm{SMAP}^* - \mathrm{SSM}_{\mathrm{OL}}$) | RMSE | ubRMSE | $r_{\mathrm{SMAP}^* \mathrm{vs} \mathrm{OL}}$ | $r_{\mathrm{anom}}$ (SMAP brut) | Contraste GMIA Clay Loam JJA |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| B0_Raw | 1,523,435 (41.6%) | 0 (0.0%) | -0.0362 m³/m³ | 0.0635 m³/m³ | 0.0522 m³/m³ | 0.5863 | 1.0000 | +0.0109 [-0.0113, +0.0187] (interprétable) |
-| B1_Climatology | 1,523,435 (41.6%) | 0 (0.0%) | +0.0113 m³/m³ | 0.0441 m³/m³ | 0.0427 m³/m³ | 0.7465 | 1.0000 | +0.0177 [-0.0101, +0.0270] (interprétable) |
-| B2_CDF_Legacy | 1,523,435 (41.6%) | 0 (0.0%) | +0.0087 m³/m³ | 0.0327 m³/m³ | 0.0316 m³/m³ | 0.8238 | 0.8254 | -0.0049 [-0.0144, -0.0001] (interprétable) |
-| B2_train_CDF | 1,523,435 (41.6%) | 0 (0.0%) | +0.0134 m³/m³ | 0.0383 m³/m³ | 0.0358 m³/m³ | 0.7767 | 0.8129 | -0.0024 [-0.0128, +0.0017] (interprétable) |
-| LGB_V1_Removable | 1,523,435 (41.6%) | 0 (0.0%) | -0.0053 m³/m³ | 0.0486 m³/m³ | 0.0483 m³/m³ | 0.5749 | 0.9701 | +0.0150 [-0.0219, +0.0269] (interprétable) |
-| LGB_V2_Rem_ContextRep | 1,523,435 (41.6%) | 0 (0.0%) | +0.0146 m³/m³ | 0.0384 m³/m³ | 0.0355 m³/m³ | 0.8235 | 0.8990 | +0.0026 [-0.0251, +0.0126] (interprétable) |
-| LGB_V3_Rem_AllContext | 1,523,435 (41.6%) | 0 (0.0%) | +0.0121 m³/m³ | 0.0348 m³/m³ | 0.0327 m³/m³ | 0.8622 | 0.8812 | -0.0036 [-0.0308, +0.0092] (interprétable) |
+| B0_Raw | 1,521,751 (41.6%) | 0 (0.0%) | -0.0363 m³/m³ | 0.0636 m³/m³ | 0.0522 m³/m³ | 0.5862 | 1.0000 | +0.0107 [-0.0110, +0.0186] (interprétable) |
+| B1_Climatology | 1,521,751 (41.6%) | 0 (0.0%) | +0.0113 m³/m³ | 0.0441 m³/m³ | 0.0427 m³/m³ | 0.7461 | 1.0000 | +0.0178 [-0.0094, +0.0271] (interprétable) |
+| B2_CDF_Legacy | 1,521,751 (41.6%) | 0 (0.0%) | +0.0087 m³/m³ | 0.0327 m³/m³ | 0.0315 m³/m³ | 0.8237 | 0.8257 | -0.0048 [-0.0135, -0.0000] (interprétable) |
+| B2_train_CDF | 1,521,751 (41.6%) | 0 (0.0%) | +0.0134 m³/m³ | 0.0382 m³/m³ | 0.0358 m³/m³ | 0.7766 | 0.8131 | -0.0024 [-0.0118, +0.0018] (interprétable) |
+| LGB_V1_Removable | 1,521,751 (41.6%) | 0 (0.0%) | -0.0051 m³/m³ | 0.0486 m³/m³ | 0.0483 m³/m³ | 0.5747 | 0.9700 | +0.0154 [-0.0200, +0.0266] (interprétable) |
+| LGB_V2_Rem_ContextRep | 1,521,751 (41.6%) | 0 (0.0%) | +0.0147 m³/m³ | 0.0385 m³/m³ | 0.0356 m³/m³ | 0.8223 | 0.8991 | +0.0036 [-0.0222, +0.0125] (interprétable) |
+| LGB_V3_Rem_AllContext | 1,521,751 (41.6%) | 0 (0.0%) | +0.0122 m³/m³ | 0.0348 m³/m³ | 0.0326 m³/m³ | 0.8630 | 0.8801 | -0.0028 [-0.0289, +0.0096] (interprétable) |
 
 ### 5.3 Stratification saisonnière des métriques (Échantillon spécifique)
 
@@ -158,21 +158,21 @@ Le flétrissement ($\mathrm{SMAP}^* \ge \theta_{\mathrm{wlt}} + 0{,}02$) est rec
 | B2_train_CDF | JJA | 252,249 (39.5%) | 355,653 (55.7%) | +0.0156 m³/m³ | 0.0343 m³/m³ | 0.0305 m³/m³ | 0.7179 | 0.7885 |
 | B2_train_CDF | SON | 785,888 (78.8%) | 119,588 (12.0%) | +0.0229 m³/m³ | 0.0469 m³/m³ | 0.0409 m³/m³ | 0.6867 | 0.7775 |
 | B2_train_CDF | Annual | 2,787,534 (76.1%) | 596,740 (16.3%) | +0.0168 m³/m³ | 0.0433 m³/m³ | 0.0399 m³/m³ | 0.7451 | 0.7801 |
-| LGB_V1_Removable | DJF | 979,579 (98.5%) | 15,302 (1.5%) | -0.0123 m³/m³ | 0.0465 m³/m³ | 0.0449 m³/m³ | 0.6698 | 0.9635 |
-| LGB_V1_Removable | MAM | 970,636 (94.3%) | 58,974 (5.7%) | -0.0108 m³/m³ | 0.0474 m³/m³ | 0.0461 m³/m³ | 0.6007 | 0.9714 |
-| LGB_V1_Removable | JJA | 595,862 (93.3%) | 43,016 (6.7%) | +0.0453 m³/m³ | 0.0552 m³/m³ | 0.0316 m³/m³ | 0.3605 | 0.9240 |
-| LGB_V1_Removable | SON | 970,959 (97.3%) | 26,471 (2.7%) | +0.0223 m³/m³ | 0.0468 m³/m³ | 0.0411 m³/m³ | 0.6766 | 0.9694 |
-| LGB_V1_Removable | Annual | 3,517,036 (96.1%) | 143,763 (3.9%) | +0.0074 m³/m³ | 0.0484 m³/m³ | 0.0478 m³/m³ | 0.6248 | 0.9667 |
-| LGB_V2_Rem_ContextRep | DJF | 910,148 (91.5%) | 84,733 (8.5%) | +0.0036 m³/m³ | 0.0308 m³/m³ | 0.0305 m³/m³ | 0.8538 | 0.9283 |
-| LGB_V2_Rem_ContextRep | MAM | 901,947 (87.6%) | 127,663 (12.4%) | +0.0032 m³/m³ | 0.0309 m³/m³ | 0.0307 m³/m³ | 0.8579 | 0.8645 |
-| LGB_V2_Rem_ContextRep | JJA | 257,114 (40.2%) | 381,764 (59.8%) | +0.0046 m³/m³ | 0.0207 m³/m³ | 0.0201 m³/m³ | 0.8623 | 0.7501 |
-| LGB_V2_Rem_ContextRep | SON | 774,621 (77.7%) | 222,809 (22.3%) | +0.0122 m³/m³ | 0.0342 m³/m³ | 0.0320 m³/m³ | 0.8522 | 0.8775 |
-| LGB_V2_Rem_ContextRep | Annual | 2,843,830 (77.7%) | 816,969 (22.3%) | +0.0059 m³/m³ | 0.0310 m³/m³ | 0.0305 m³/m³ | 0.8640 | 0.8780 |
-| LGB_V3_Rem_AllContext | DJF | 905,247 (91.0%) | 89,634 (9.0%) | +0.0028 m³/m³ | 0.0273 m³/m³ | 0.0272 m³/m³ | 0.8887 | 0.9112 |
-| LGB_V3_Rem_AllContext | MAM | 902,812 (87.7%) | 126,798 (12.3%) | +0.0047 m³/m³ | 0.0296 m³/m³ | 0.0292 m³/m³ | 0.8857 | 0.8451 |
-| LGB_V3_Rem_AllContext | JJA | 235,661 (36.9%) | 403,217 (63.1%) | +0.0028 m³/m³ | 0.0184 m³/m³ | 0.0182 m³/m³ | 0.8857 | 0.7269 |
-| LGB_V3_Rem_AllContext | SON | 743,996 (74.6%) | 253,434 (25.4%) | +0.0084 m³/m³ | 0.0304 m³/m³ | 0.0292 m³/m³ | 0.8751 | 0.8624 |
-| LGB_V3_Rem_AllContext | Annual | 2,787,716 (76.2%) | 873,083 (23.8%) | +0.0049 m³/m³ | 0.0283 m³/m³ | 0.0279 m³/m³ | 0.8903 | 0.8596 |
+| LGB_V1_Removable | DJF | 979,670 (98.5%) | 15,211 (1.5%) | -0.0121 m³/m³ | 0.0465 m³/m³ | 0.0449 m³/m³ | 0.6706 | 0.9638 |
+| LGB_V1_Removable | MAM | 971,198 (94.3%) | 58,412 (5.7%) | -0.0108 m³/m³ | 0.0474 m³/m³ | 0.0461 m³/m³ | 0.6003 | 0.9714 |
+| LGB_V1_Removable | JJA | 595,935 (93.3%) | 42,943 (6.7%) | +0.0453 m³/m³ | 0.0553 m³/m³ | 0.0317 m³/m³ | 0.3555 | 0.9215 |
+| LGB_V1_Removable | SON | 971,352 (97.4%) | 26,078 (2.6%) | +0.0223 m³/m³ | 0.0469 m³/m³ | 0.0412 m³/m³ | 0.6750 | 0.9693 |
+| LGB_V1_Removable | Annual | 3,518,155 (96.1%) | 142,644 (3.9%) | +0.0075 m³/m³ | 0.0484 m³/m³ | 0.0478 m³/m³ | 0.6246 | 0.9667 |
+| LGB_V2_Rem_ContextRep | DJF | 909,912 (91.5%) | 84,969 (8.5%) | +0.0038 m³/m³ | 0.0308 m³/m³ | 0.0306 m³/m³ | 0.8540 | 0.9282 |
+| LGB_V2_Rem_ContextRep | MAM | 902,779 (87.7%) | 126,831 (12.3%) | +0.0030 m³/m³ | 0.0307 m³/m³ | 0.0306 m³/m³ | 0.8582 | 0.8644 |
+| LGB_V2_Rem_ContextRep | JJA | 261,352 (40.9%) | 377,526 (59.1%) | +0.0048 m³/m³ | 0.0208 m³/m³ | 0.0202 m³/m³ | 0.8634 | 0.7527 |
+| LGB_V2_Rem_ContextRep | SON | 773,962 (77.6%) | 223,468 (22.4%) | +0.0123 m³/m³ | 0.0345 m³/m³ | 0.0323 m³/m³ | 0.8501 | 0.8783 |
+| LGB_V2_Rem_ContextRep | Annual | 2,848,005 (77.8%) | 812,794 (22.2%) | +0.0059 m³/m³ | 0.0311 m³/m³ | 0.0305 m³/m³ | 0.8638 | 0.8783 |
+| LGB_V3_Rem_AllContext | DJF | 905,683 (91.0%) | 89,198 (9.0%) | +0.0030 m³/m³ | 0.0273 m³/m³ | 0.0271 m³/m³ | 0.8900 | 0.9109 |
+| LGB_V3_Rem_AllContext | MAM | 903,842 (87.8%) | 125,768 (12.2%) | +0.0047 m³/m³ | 0.0294 m³/m³ | 0.0291 m³/m³ | 0.8873 | 0.8434 |
+| LGB_V3_Rem_AllContext | JJA | 236,647 (37.0%) | 402,231 (63.0%) | +0.0026 m³/m³ | 0.0185 m³/m³ | 0.0183 m³/m³ | 0.8854 | 0.7276 |
+| LGB_V3_Rem_AllContext | SON | 741,000 (74.3%) | 256,430 (25.7%) | +0.0084 m³/m³ | 0.0305 m³/m³ | 0.0293 m³/m³ | 0.8739 | 0.8627 |
+| LGB_V3_Rem_AllContext | Annual | 2,787,172 (76.1%) | 873,627 (23.9%) | +0.0049 m³/m³ | 0.0283 m³/m³ | 0.0278 m³/m³ | 0.8910 | 0.8589 |
 
 ---
 

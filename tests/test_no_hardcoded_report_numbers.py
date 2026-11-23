@@ -225,3 +225,23 @@ def test_no_hardcoded_metrics_in_functions():
 
     assert "0.7729" not in metric_code, "Found hardcoded rf_r = 0.7729 in metric functions!"
     assert "RF_Comparison_Phase2b" not in metric_code, "Found manual RF_Comparison_Phase2b row in metric functions!"
+
+def test_no_cv_fold_or_replace_true_in_script10():
+    """Verify that neither 'cv_fold' nor 'replace=True' appears in load_training_data or spatial CV in script 10."""
+    script_path = os.path.join(ROOT_DIR, "scripts", "10_train_phase2c_lightgbm.py")
+    with open(script_path, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    start_load = code.find("def load_training_data(")
+    end_load = code.find("def run_spatial_cross_validation(", start_load)
+    load_code = code[start_load:end_load]
+
+    start_cv = end_load
+    end_cv = code.find("def train_full_model(", start_cv)
+    cv_code = code[start_cv:end_cv]
+
+    assert "cv_fold" not in load_code, "Found 'cv_fold' in load_training_data!"
+    assert "replace=True" not in load_code, "Found 'replace=True' in load_training_data!"
+    assert "cv_fold" not in cv_code, "Found 'cv_fold' in run_spatial_cross_validation!"
+    assert "replace=True" not in cv_code, "Found 'replace=True' in run_spatial_cross_validation!"
+    assert "spatial_fold" in cv_code, "Expected 'spatial_fold' in run_spatial_cross_validation!"

@@ -75,6 +75,13 @@ TEXTURE_NAMES = {
 }
 
 
+
+def get_n_jobs():
+    """Get number of CPU cores allocated by SLURM (SLURM_CPUS_PER_TASK) or fallback to local count."""
+    if "SLURM_CPUS_PER_TASK" in os.environ:
+        return int(os.environ["SLURM_CPUS_PER_TASK"])
+    return os.cpu_count() or 8
+
 def load_feature_groups():
     """Load and parse feature groups from configs/predictors.yaml."""
     with open(CONFIG_PREDICTORS, 'r') as f:
@@ -111,11 +118,11 @@ def load_feature_groups():
 
 
 def load_training_data(feature_cols):
-    """Load 2016-2018 training data with stratified sampling: 100 observations per pixel."""
-    print("--- Loading 2016-2018 Training Data (Stratified Sampling: 100 obs/pixel) ---")
+    """Load 2016-2018 training data with stratified sampling: at most 100 observations per pixel without replacement."""
+    print("--- Loading 2016-2018 Training Data (Stratified Sampling: <= 100 obs/pixel without replacement) ---")
     t0 = time.time()
     
-    meta_cols = ['pixel_id', 'month', 'target_d', 'spatial_block_id',
+    meta_cols = ['pixel_id', 'month', 'target_d', 'spatial_block_id', 'spatial_fold',
                  'qc_lis_rain', 'qc_lis_frozen', 'qc_lis_forest', 'qc_lis_snow',
                  'qc_lis_high_veg', 'qc_lis_sat_limit', 'qc_lis_vwc_gt_5', 'smap_sm']
     load_cols = list(set(feature_cols + meta_cols))
@@ -136,46 +143,47 @@ def load_training_data(feature_cols):
             (~df_y['target_d'].isna()) &
             (~df_y['smap_sm'].isna())
         )
-        df_valid = df_y[qc_nw][['pixel_id', 'target_d', 'spatial_block_id'] + feature_cols].copy()
+        df_valid = df_y[qc_nw][['pixel_id', 'target_d', 'spatial_block_id', 'spatial_fold'] + feature_cols].copy()
         print(f"  Year {year}: loaded {len(df_valid):,} non-wilt QC valid rows")
         dfs.append(df_valid)
         
     full_train_df = pd.concat(dfs, ignore_index=True)
     
-    # Stratified sampling: 100 observations per pixel (with replacement only if count < 100)
-    np.random.seed(42)
-    def sample_px(group):
-        n = len(group)
-        if n >= 100:
-            return group.sample(n=100, replace=False, random_state=42)
-        else:
-            return group.sample(n=100, replace=True, random_state=42)
-            
-    full_train_df['pixel_id_copy'] = full_train_df['pixel_id']
-    train_sampled = full_train_df.groupby('pixel_id', group_keys=False).apply(sample_px)
-    train_sampled['pixel_id'] = train_sampled['pixel_id_copy']
-    train_sampled = train_sampled.drop(columns=['pixel_id_copy']).sample(frac=1.0, random_state=42).reset_index(drop=True)
+    # Stratified sampling without replacement: at most 100 observations per pixel (no duplicates)
+    full_train_df['rand_sort'] = np.random.RandomState(42).rand(len(full_train_df))
+    train_sampled = (
+        full_train_df.sort_values(['pixel_id', 'rand_sort'])
+        .groupby('pixel_id')
+        .head(100)
+        .drop(columns=['rand_sort'])
+        .sample(frac=1.0, random_state=42)
+        .reset_index(drop=True)
+    )
     
-    # Native NaNs kept for roughness_coefficient (LightGBM natively branches NaNs)
-    n_pixels = train_sampled['pixel_id'].nunique()
-    print(f"Training set ready: {len(train_sampled):,} rows across {n_pixels:,} pixels in {time.time()-t0:.2f}s")
-    return train_sampled
+    # Sampling statistics: minimum, median, and number of pixels under 100 obs
+    counts_px = train_sampled['pixel_id'].value_counts()
+    min_obs_px = int(counts_px.min())
+    med_obs_px = float(counts_px.median())
+    n_under_100 = int((counts_px < 100).sum())
+    n_pixels = int(train_sampled['pixel_id'].nunique())
+    
+    sampling_stats = {
+        'n_train_rows': len(train_sampled),
+        'n_train_pixels': n_pixels,
+        'min_obs_per_pixel': min_obs_px,
+        'median_obs_per_pixel': med_obs_px,
+        'n_pixels_under_100': n_under_100
+    }
+    print(f"Training set ready: {len(train_sampled):,} rows across {n_pixels:,} pixels (min={min_obs_px}, median={med_obs_px:.1f}, pixels < 100 obs={n_under_100:,}) in {time.time()-t0:.2f}s")
+    return train_sampled, sampling_stats
 
 
-def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc):
-    """5-Fold Spatial Cross-Validation on 1° blocks with exact Lundberg TreeSHAP stability analysis."""
+def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc, n_jobs=8):
+    """5-Fold Spatial Cross-Validation using pre-existing spatial_fold column (Decision 7)."""
     print("--- Running 5-Fold Spatial Cross-Validation with LightGBM Exact TreeSHAP ---")
     t0 = time.time()
     
-    unique_blocks = np.sort(train_df['spatial_block_id'].unique())
-    n_blocks = len(unique_blocks)
     n_folds = 5
-    
-    np.random.seed(42)
-    shuffled_blocks = np.random.permutation(unique_blocks)
-    block_folds = {b: i % n_folds for i, b in enumerate(shuffled_blocks)}
-    train_df['cv_fold'] = train_df['spatial_block_id'].map(block_folds)
-    
     cv_records = []
     fold_shaps = []
     
@@ -198,8 +206,8 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, col
     
     for fold in range(n_folds):
         t_fold = time.time()
-        tr = train_df[train_df['cv_fold'] != fold]
-        va = train_df[train_df['cv_fold'] == fold]
+        tr = train_df[train_df['spatial_fold'] != fold]
+        va = train_df[train_df['spatial_fold'] == fold]
         
         X_tr = tr[feature_cols].values.astype(np.float32)
         y_tr = tr['target_d'].values.astype(np.float32)
@@ -217,154 +225,159 @@ def run_spatial_cross_validation(train_df, feature_cols, cols_rem, cols_ret, col
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=42 + fold,
-            n_jobs=8,
+            n_jobs=n_jobs,
             verbose=-1
         )
         model_fold.fit(X_tr, y_tr)
         
         y_pred = model_fold.predict(X_va)
-        rmse_val = float(np.sqrt(np.mean((y_pred - y_va) ** 2)))
-        r_val, _ = pearsonr(y_pred, y_va)
+        rmse_val = float(np.sqrt(np.mean((y_va - y_pred) ** 2)))
         bias_val = float(np.mean(y_pred - y_va))
+        r_val = float(np.corrcoef(y_va, y_pred)[0, 1])
         
         cv_records.append({
             'fold': fold,
-            'n_train': len(X_tr),
-            'n_val': len(X_va),
+            'n_train': len(tr),
+            'n_val': len(va),
             'rmse': rmse_val,
             'pearson_r': r_val,
             'bias': bias_val
         })
         
-        # Exact TreeSHAP on validation sample (25,000 pts)
-        n_shap = min(25000, len(X_va))
+        # Exact TreeSHAP on validation fold (sample up to 25,000 observations)
+        n_sample_shap = min(len(va), 25000)
         np.random.seed(42 + fold)
-        shap_idx = np.random.choice(len(X_va), size=n_shap, replace=False)
-        X_shap = X_va[shap_idx]
+        shap_idx = np.random.choice(len(va), n_sample_shap, replace=False)
+        X_shap_val = X_va[shap_idx]
         
-        contrib = model_fold.booster_.predict(X_shap, pred_contrib=True)
-        shap_vals = contrib[:, :-1]
-        mean_abs_shap = np.mean(np.abs(shap_vals), axis=0)
+        # Native TreeSHAP from LightGBM booster
+        t_sh = time.time()
+        contrib_val = model_fold.booster_.predict(X_shap_val, pred_contrib=True, num_threads=n_jobs)
+        shap_val = contrib_val[:, :-1]
+        
+        mean_abs_shap = np.mean(np.abs(shap_val), axis=0)
         fold_shaps.append(mean_abs_shap)
         
-        # Group-level mean absolute attribution
-        grp_imps = {}
-        for gn, g_indices in group_dict.items():
-            g_imp = float(np.mean(np.abs(shap_vals[:, g_indices].sum(axis=1))))
-            grp_imps[gn] = g_imp
-            
-            # Intra-group ranks
-            g_shap_sub = mean_abs_shap[g_indices]
-            ord_intra = np.argsort(-g_shap_sub)
-            rnks_intra = np.empty_like(ord_intra)
-            rnks_intra[ord_intra] = np.arange(1, len(g_indices) + 1)
-            fold_intra_group_ranks[fold][gn] = rnks_intra
-            
-        fold_group_importances[fold] = grp_imps
+        # Group importance on this fold
+        grp_imp = {}
+        for g_name, g_indices in group_dict.items():
+            grp_imp[g_name] = float(np.sum(mean_abs_shap[g_indices]))
+        fold_group_importances[fold] = grp_imp
         
-        print(f"  Fold {fold}: Val RMSE={rmse_val:.4f}, r={r_val:.4f}, Bias={bias_val:+.4f} (SHAP on {n_shap:,} pts) in {time.time()-t_fold:.1f}s")
+        # Intra-group variable ranks on this fold
+        for g_name, g_indices in group_dict.items():
+            g_importances = mean_abs_shap[g_indices]
+            g_ranks = np.argsort(-g_importances)
+            fold_intra_group_ranks[fold][g_name] = g_ranks
+            
+        print(f"  Fold {fold}: Val RMSE={rmse_val:.4f}, r={r_val:.4f}, Bias={bias_val:+.4f} (SHAP on {n_sample_shap:,} pts) in {time.time()-t_fold:.1f}s")
         
     df_cv = pd.DataFrame(cv_records)
+    print(f"Spatial CV mean RMSE: {df_cv['rmse'].mean():.4f}, mean r: {df_cv['pearson_r'].mean():.4f}")
     
-    # Feature rank table
-    df_ranks = pd.DataFrame({'feature': feature_cols})
-    folds = list(range(n_folds))
-    for f in folds:
-        f_shap = fold_shaps[f]
-        df_ranks[f'fold_{f}_shap'] = f_shap
-        order = np.argsort(-f_shap)
-        ranks = np.empty_like(order)
-        ranks[order] = np.arange(1, len(f_shap) + 1)
-        df_ranks[f'fold_{f}_rank'] = ranks
+    # Feature rank stability across folds
+    fold_shaps_arr = np.array(fold_shaps)  # (5, 66)
+    mean_shaps = np.mean(fold_shaps_arr, axis=0)
+    
+    rank_records = []
+    for j, col in enumerate(feature_cols):
+        rec = {'feature': col, 'mean_shap': mean_shaps[j]}
+        for f in range(n_folds):
+            ranks_f = np.argsort(-fold_shaps_arr[f])
+            rank_of_j = int(np.where(ranks_f == j)[0][0]) + 1
+            rec[f'fold_{f}_rank'] = rank_of_j
+        rec['mean_rank'] = np.mean([rec[f'fold_{f}_rank'] for f in range(n_folds)])
+        rank_records.append(rec)
         
-    rank_cols = [f'fold_{f}_rank' for f in folds]
-    shap_cols = [f'fold_{f}_shap' for f in folds]
-    df_ranks['mean_rank'] = df_ranks[rank_cols].mean(axis=1)
-    df_ranks['mean_shap'] = df_ranks[shap_cols].mean(axis=1)
-    df_ranks = df_ranks.sort_values('mean_rank').reset_index(drop=True)
+    df_ranks = pd.DataFrame(rank_records).sort_values('mean_rank').reset_index(drop=True)
+    csv_ranks = os.path.join(REPORTS_DIR, "phase2c_lgb_feature_ranks.csv")
+    df_ranks.to_csv(csv_ranks, index=False)
+    print(f"Saved: {csv_ranks}")
     
+    # Group stability & intra-group rank correlations
+    grp_stab_records = []
+    for g_name, g_indices in group_dict.items():
+        mean_g_imp = np.mean([fold_group_importances[f][g_name] for f in range(n_folds)])
+        
+        # Ranks of this group across 4 groups for each fold
+        grp_ranks_by_fold = []
+        for f in range(n_folds):
+            sorted_grps = sorted(fold_group_importances[f].keys(), key=lambda k: -fold_group_importances[f][k])
+            grp_ranks_by_fold.append(sorted_grps.index(g_name) + 1)
+            
+        # Intra-group Spearman rho across fold pairs
+        intra_rhos = []
+        for fa in range(n_folds):
+            for fb in range(fa + 1, n_folds):
+                r_sp, _ = spearmanr(fold_shaps_arr[fa][g_indices], fold_shaps_arr[fb][g_indices])
+                if not np.isnan(r_sp):
+                    intra_rhos.append(r_sp)
+        mean_intra_rho = np.mean(intra_rhos) if len(intra_rhos) > 0 else 1.0
+        
+        grp_stab_records.append({
+            'group': g_name,
+            'mean_importance': mean_g_imp,
+            'fold_0_rank': grp_ranks_by_fold[0],
+            'fold_1_rank': grp_ranks_by_fold[1],
+            'fold_2_rank': grp_ranks_by_fold[2],
+            'fold_3_rank': grp_ranks_by_fold[3],
+            'fold_4_rank': grp_ranks_by_fold[4],
+            'mean_rank': np.mean(grp_ranks_by_fold),
+            'mean_intra_spearman_rho': mean_intra_rho
+        })
+    df_group_stab = pd.DataFrame(grp_stab_records).sort_values('mean_rank').reset_index(drop=True)
+    csv_group = os.path.join(REPORTS_DIR, "phase2c_lgb_group_stability.csv")
+    df_group_stab.to_csv(csv_group, index=False)
+    print(f"Saved: {csv_group}")
+    
+    # Pairwise Spearman stability
     top15_features = df_ranks.head(15)['feature'].tolist()
-    top15_ranks_df = df_ranks.head(15).copy()
+    top15_idx = [feature_cols.index(c) for c in top15_features]
     
-    # Group ranks per fold (rank 1 is highest importance)
-    fold_group_ranks = {}
-    for fold in folds:
-        vals = [fold_group_importances[fold][gn] for gn in grp_names]
-        ord_g = np.argsort(-np.array(vals))
-        rnks = np.empty_like(ord_g)
-        rnks[ord_g] = np.arange(1, len(grp_names) + 1)
-        fold_group_ranks[fold] = {gn: int(rnks[k]) for k, gn in enumerate(grp_names)}
-        
-    # Pairwise Spearman correlations across folds
-    spearman_pairs = []
-    matrix_spearman = np.zeros((n_folds, n_folds))
-    for i in range(n_folds):
-        matrix_spearman[i, i] = 1.0
-        for j in range(i + 1, n_folds):
-            r_top15, p_top15 = spearmanr(top15_ranks_df[f'fold_{i}_rank'], top15_ranks_df[f'fold_{j}_rank'])
-            r_all, p_all = spearmanr(df_ranks[f'fold_{i}_rank'], df_ranks[f'fold_{j}_rank'])
+    stability_records = []
+    matrix_spearman = np.ones((n_folds, n_folds), dtype=np.float32)
+    for fa in range(n_folds):
+        for fb in range(fa + 1, n_folds):
+            # All 66
+            r_all, p_all = spearmanr(fold_shaps_arr[fa], fold_shaps_arr[fb])
+            # Top 15
+            r_top15, p_top15 = spearmanr(fold_shaps_arr[fa][top15_idx], fold_shaps_arr[fb][top15_idx])
+            # 4 Groups
+            ga = [fold_group_importances[fa][g] for g in grp_names]
+            gb = [fold_group_importances[fb][g] for g in grp_names]
+            r_grp, p_grp = spearmanr(ga, gb)
             
-            r_groups, p_groups = spearmanr(
-                [fold_group_ranks[i][gn] for gn in grp_names],
-                [fold_group_ranks[j][gn] for gn in grp_names]
-            )
+            # Intra-group correlations
+            r_intra_rem, _ = spearmanr(fold_shaps_arr[fa][group_dict['removable']], fold_shaps_arr[fb][group_dict['removable']])
+            r_intra_ret, _ = spearmanr(fold_shaps_arr[fa][group_dict['retained']], fold_shaps_arr[fb][group_dict['retained']])
+            r_intra_rep, _ = spearmanr(fold_shaps_arr[fa][group_dict['context_representation']], fold_shaps_arr[fb][group_dict['context_representation']])
+            r_intra_proc, _ = spearmanr(fold_shaps_arr[fa][group_dict['context_process']], fold_shaps_arr[fb][group_dict['context_process']])
             
-            intra_corrs = {}
-            for gn in grp_names:
-                r_intra, p_intra = spearmanr(fold_intra_group_ranks[i][gn], fold_intra_group_ranks[j][gn])
-                intra_corrs[f'spearman_intra_{gn}'] = r_intra
-                intra_corrs[f'p_intra_{gn}'] = p_intra
-            
-            pair_dict = {
-                'fold_a': i,
-                'fold_b': j,
+            matrix_spearman[fa, fb] = r_all
+            matrix_spearman[fb, fa] = r_all
+            stability_records.append({
+                'fold_a': fa,
+                'fold_b': fb,
+                'spearman_r_groups': r_grp,
+                'spearman_intra_removable': r_intra_rem,
+                'spearman_intra_retained': r_intra_ret,
+                'spearman_intra_context_representation': r_intra_rep,
+                'spearman_intra_context_process': r_intra_proc,
                 'spearman_r_top15': r_top15,
                 'p_value_top15': p_top15,
                 'spearman_r_all': r_all,
-                'p_value_all': p_all,
-                'spearman_r_groups': r_groups,
-                'p_value_groups': p_groups,
-            }
-            pair_dict.update(intra_corrs)
-            spearman_pairs.append(pair_dict)
-            matrix_spearman[i, j] = r_top15
-            matrix_spearman[j, i] = r_top15
-            
-    df_stability = pd.DataFrame(spearman_pairs)
-    mean_rho_top15 = df_stability['spearman_r_top15'].mean()
-    mean_rho_all = df_stability['spearman_r_all'].mean()
-    mean_rho_groups = df_stability['spearman_r_groups'].mean()
-    print(f"SHAP stability: Groups rho={mean_rho_groups:.4f}, Top 15 rho={mean_rho_top15:.4f}, All features rho={mean_rho_all:.4f} across 10 fold pairs in {time.time()-t0:.1f}s")
-    
-    # Group stability table
-    grp_records = []
-    for gn in grp_names:
-        mean_imp = float(np.mean([fold_group_importances[f][gn] for f in folds]))
-        mean_rnk = float(np.mean([fold_group_ranks[f][gn] for f in folds]))
-        col_intra = f"spearman_intra_{gn}"
-        mean_intra_rho = float(df_stability[col_intra].mean())
-        grp_records.append({
-            'group': gn,
-            'mean_importance': mean_imp,
-            'mean_rank': mean_rnk,
-            'fold_0_rank': fold_group_ranks[0][gn],
-            'fold_1_rank': fold_group_ranks[1][gn],
-            'fold_2_rank': fold_group_ranks[2][gn],
-            'fold_3_rank': fold_group_ranks[3][gn],
-            'fold_4_rank': fold_group_ranks[4][gn],
-            'mean_intra_spearman_rho': mean_intra_rho
-        })
-    df_group_stab = pd.DataFrame(grp_records)
-    
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    df_ranks.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_feature_ranks.csv"), index=False)
-    df_stability.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_shap_stability.csv"), index=False)
-    df_group_stab.to_csv(os.path.join(REPORTS_DIR, "phase2c_lgb_group_stability.csv"), index=False)
+                'p_value_all': p_all
+            })
+    df_stability = pd.DataFrame(stability_records)
+    csv_stab = os.path.join(REPORTS_DIR, "phase2c_lgb_shap_stability.csv")
+    df_stability.to_csv(csv_stab, index=False)
+    print(f"Saved: {csv_stab}")
+    print(f"SHAP stability: Groups rho={df_stability['spearman_r_groups'].mean():.4f}, Top 15 rho={df_stability['spearman_r_top15'].mean():.4f}, All features rho={df_stability['spearman_r_all'].mean():.4f} across 10 fold pairs in {time.time()-t0:.1f}s")
     
     return df_cv, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features
 
 
-def train_full_model(train_df, feature_cols):
+def train_full_model(train_df, feature_cols, n_jobs=8):
     """Train the final LightGBM model on all 2016-2018 training data."""
     print("--- Training Full LightGBM Model on 2016-2018 Training Data ---")
     t0 = time.time()
@@ -383,7 +396,7 @@ def train_full_model(train_df, feature_cols):
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42,
-        n_jobs=8,
+        n_jobs=n_jobs,
         verbose=-1
     )
     model.fit(X_train, y_train)
@@ -465,15 +478,25 @@ def learn_b1_climatology():
         )
         dfs.append(df_y.loc[qc_nw, ['pixel_id', 'month', 'target_d']])
     full_train = pd.concat(dfs, ignore_index=True)
-    climatology = full_train.groupby(['pixel_id', 'month'])['target_d'].mean().to_dict()
-    pixel_fallback = full_train.groupby('pixel_id')['target_d'].mean().to_dict()
+    b1_clim_table = (
+        full_train.groupby(['pixel_id', 'month'])['target_d']
+        .mean()
+        .reset_index()
+        .rename(columns={'target_d': 'b1_bias'})
+    )
+    b1_pixel_table = (
+        full_train.groupby('pixel_id')['target_d']
+        .mean()
+        .reset_index()
+        .rename(columns={'target_d': 'b1_pixel_fallback'})
+    )
     global_fallback = float(full_train['target_d'].mean())
     print(f"B1 Climatology learned on all {len(full_train):,} rows across 2016-2018 in {time.time()-t0:.1f}s")
-    return climatology, pixel_fallback, global_fallback
+    return b1_clim_table, b1_pixel_table, global_fallback
 
 
 def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained, cols_context_rep, cols_context_proc,
-                             lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, climatology, pixel_fallback, global_fallback):
+                             lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, b1_clim_table, b1_pixel_table, global_fallback, n_jobs=8):
     """Evaluate 2019 validation set using exact Lundberg TreeSHAP and compute all variants (V1, V2, V3)."""
     print("--- Evaluating 2019 Validation Set with Exact TreeSHAP and Variants V1, V2, V3 ---")
     t0 = time.time()
@@ -535,10 +558,12 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
         (~df_2019['smap_star_b0'].isna())
     )
     
-    # 2. Baseline B1: Climatology
-    p_ids = df_2019['pixel_id'].values
-    months = df_2019['month'].values
-    c_hat = np.array([climatology.get((p, m), pixel_fallback.get(p, global_fallback)) for p, m in zip(p_ids, months)], dtype=np.float32)
+    # 2. Baseline B1: Climatology via vectorized pandas join on (pixel_id, month)
+    df_2019 = df_2019.merge(b1_clim_table, on=['pixel_id', 'month'], how='left')
+    df_2019 = df_2019.merge(b1_pixel_table, on='pixel_id', how='left')
+    c_hat = df_2019['b1_bias'].fillna(df_2019['b1_pixel_fallback']).fillna(global_fallback).values.astype(np.float32)
+    df_2019.drop(columns=['b1_bias', 'b1_pixel_fallback'], inplace=True)
+
     df_2019['smap_star_b1'] = df_2019['smap_sm'] - c_hat
     df_2019['d_res_b1'] = df_2019['target_d'] - c_hat
     df_2019['under_wlt_b1'] = (df_2019['smap_star_b1'] < df_2019['wlt_thresh']).astype(int)
@@ -550,6 +575,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     )
     
     # 3. Baseline B2: CDF legacy (2016-2021)
+    months = df_2019['month'].values
     with nc.Dataset(CDF_OBS_FILE) as ds_o:
         obs_x = ds_o.variables['SoilMoist_xrange'][:, 0, :, :]
     obs_delta = obs_x[1, :, :] - obs_x[0, :, :]
@@ -616,7 +642,7 @@ def evaluate_2019_validation(model, feature_cols, cols_removable, cols_retained,
     else:
         print(f"Computing EXACT TreeSHAP on all {len(df_2019):,} observations of 2019...")
         t_shap = time.time()
-        contrib_2019 = model.booster_.predict(X_val_2019, pred_contrib=True)
+        contrib_2019 = model.booster_.predict(X_val_2019, pred_contrib=True, num_threads=n_jobs)
         os.makedirs(os.path.dirname(contrib_cache_file), exist_ok=True)
         np.save(contrib_cache_file, contrib_2019)
         print(f"Exact TreeSHAP computed and cached in {time.time()-t_shap:.1f}s")
@@ -1221,7 +1247,7 @@ def generate_figures(df_2019, shap_2019, X_val_2019, feature_cols, cols_removabl
 
 
 def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics, df_seas_metrics,
-                             n_total_2019, n_base_qc, n_common, phi_0):
+                             n_total_2019, n_base_qc, n_common, phi_0, sampling_stats):
     """Generate Markdown report for Phase 2c with ZERO hardcoded numbers and ZERO banned phrases."""
     print("--- Generating Phase 2c LightGBM Markdown Report ---")
     out_md = os.path.join(REPORTS_DIR, "phase2c_lgb_report.md")
@@ -1335,7 +1361,7 @@ def generate_markdown_report(df_cv, df_ranks, df_stability, df_group_stab, df_se
 **Période d'entraînement :** 2016-01-01 au 2018-12-31 (scindée en 5 plis spatiaux de 1°)  
 **Période d'évaluation :** 2019-01-01 au 2019-12-31 (année 2019 scellée au préalable)  
 **Année 2020 :** Strictement scellée (aucune lecture, aucune inférence)  
-**Population d'entraînement :** Échantillon stratifié de 100 observations par pixel tirées aléatoirement parmi les observations QC-valides (hors flétrissement) sur 2016–2018.  
+**Population d'entraînement :** Échantillon stratifié d'au plus 100 observations par pixel sans remise parmi les observations non-wilt QC-valides sur 2016–2018 (min : {sampling_stats['min_obs_per_pixel']}, médiane : {sampling_stats['median_obs_per_pixel']:.1f}, {sampling_stats['n_pixels_under_100']:,} pixels sous 100 obs sur {sampling_stats['n_train_pixels']:,} pixels, {sampling_stats['n_train_rows']:,} lignes au total).  
 **Algorithme principal :** LightGBM (300 arbres, learning_rate=0,05, num_leaves=63)  
 **Gestion des valeurs manquantes :** Traitement natif des NaN par LightGBM pour la rugosité (`roughness_coefficient`), sans imputation par zéro, complété par l'indicateur binaire `roughness_is_nan`.  
 **Méthode d'attribution :** TreeSHAP EXACT natif (`pred_contrib=True`), aucune approximation de Saabas.  
@@ -1355,7 +1381,7 @@ Le dictionnaire `configs/predictors.yaml` structure l'ensemble des 66 variables 
 
 ## 2. Validation croisée spatiale (5 plis de 1°)
 
-Validation sur blocs spatiaux disjoints de 1° avec calcul du TreeSHAP exact sur au moins 25 000 observations de validation par pli :
+Validation croisée sur les 5 plis spatiaux équilibrés de 1° (`spatial_fold`, Décision 7) avec calcul du TreeSHAP exact sur au moins 25 000 observations de validation par pli :
 
 | Pli | Taille Train | Taille Val | RMSE Val | Pearson r | Biais Val |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -1457,27 +1483,30 @@ def main():
         dom_soil = ds.variables['dominant_soiltype'][:]
         
     # 3. Load 2016-2018 Training Data (Stratified: 100 obs/pixel)
-    train_df = load_training_data(feature_cols)
+    train_df, sampling_stats = load_training_data(feature_cols)
     
+    n_jobs = get_n_jobs()
+    print(f"Allocated CPU cores (n_jobs): {n_jobs}")
+
     # 4. Spatial Cross-Validation (5 folds on 1° blocks)
     df_cv, df_ranks, df_stability, df_group_stab, matrix_spearman, top15_features = run_spatial_cross_validation(
-        train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc
+        train_df, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc, n_jobs=n_jobs
     )
     
     # 5. Full Model Training on 2016-2018
-    model = train_full_model(train_df, feature_cols)
+    model = train_full_model(train_df, feature_cols, n_jobs=n_jobs)
     
     # 6. Load B2 & B2-train Lookup Tables
     lut_b2 = np.load(LUT_CACHE_FILE) if os.path.exists(LUT_CACHE_FILE) else None
     lut_b2_train = load_or_build_b2_train_lut(landmask)
     
     # Baseline B1 Climatology learned on ALL 2016-2018 observations passing non-wilt QC
-    climatology, pixel_fallback, global_fallback = learn_b1_climatology()
+    b1_clim_table, b1_pixel_table, global_fallback = learn_b1_climatology()
     
     # 7. Evaluate 2019 Validation Set
     df_2019, shap_2019, X_val_2019, phi_0, n_total_2019, n_base_qc = evaluate_2019_validation(
         model, feature_cols, cols_rem, cols_ret, cols_ctx_rep, cols_ctx_proc,
-        lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, climatology, pixel_fallback, global_fallback
+        lut_b2, lut_b2_train, landmask, soil_wlt, dom_soil, b1_clim_table, b1_pixel_table, global_fallback, n_jobs=n_jobs
     )
     
     # 8. Compute Seasonal Corrections, Full Protocol 2a Metrics, and Seasonal Metrics
@@ -1495,7 +1524,7 @@ def main():
     # 10. Generate Markdown Report directly
     generate_markdown_report(
         df_cv, df_ranks, df_stability, df_group_stab, df_seasonal, df_metrics, df_seas_metrics,
-        n_total_2019, n_base_qc, n_common, phi_0
+        n_total_2019, n_base_qc, n_common, phi_0, sampling_stats
     )
     
     print(f"=== PHASE 2c COMPLETED SUCCESSFULLY IN {time.time()-t_start:.1f}s ===")

@@ -159,3 +159,32 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
 - **Contexte** : La référence historique B2 (2016–2021) englobait la période d'évaluation 2019 et la période scellée 2020.
 - **Décision** : Reconstruire avec LDT les fichiers CDF observation et modèle strictement sur la période d'entraînement 2016-01-01 00:00:00 à 2019-01-01 00:00:00 dans `experiments/ldt_b2_train/` (accord utilisateur explicite reçu). Cette nouvelle référence, notée **B2-train**, élimine toute fuite temporelle et est intégrée à l'ensemble des comparaisons du protocole 2a.
 - **Statut** : Exécuté et validé.
+
+---
+
+## Décision 15 : Méthode candidate figée avant le test 2020
+- **Contexte** : À l'issue des phases d'audit et d'évaluation comparative (Phases 2a, 2a-bis, 2b et 2c), une méthode candidate unique doit être formalisée et figée méthodologiquement avant toute ouverture ou inférence sur l'année de test 2020 scellée.
+- **Décision (Spécification de la méthode candidate)** :
+  1. **Variante de correction retenue : V2 (Removable + Context Representation)** :
+     $$\mathrm{SMAP}^*_{\mathrm{V2}} = \mathrm{SMAP} - (\Phi_{\mathrm{removable}} + \Phi_{\mathrm{context\_rep}} + \phi_0)$$
+     Elle retire les biais instrumentaux et radiométriques attribués au groupe `removable` ainsi que les effets d'état/représentation temporelle du groupe `context_rep`, tout en préservant intégralement dans l'observation corrigée les signaux réels conservés (`retained`, incluant GMIA et les écarts pluviométriques) et sans soustraire les flux dynamiques de processus (`context_proc`).
+  2. **Structure des 4 groupes de prédicteurs (66 variables)** :
+     - `removable` (47 variables) : altitude, pente, slopetype, 16 fractions de texture, 20 fractions d'occupation du sol, corps d'eau statique, drapeau de surface, température de surface, opacité de la végétation, contenu en eau de la végétation, rugosité (`roughness_coefficient`, `roughness_is_nan`), et passage (`pass_is_pm`).
+     - `retained` (7 variables) : `irrigfrac_gmia`, `delta_precip_imerg_mswep`, `precip_mswep`, `precip_1d_sum`, `precip_3d_sum`, `precip_7d_sum`, `days_since_rain_gt_1mm`.
+     - `context_representation` (4 variables) : `doy_sin`, `doy_cos`, `ssm_lag1`, `ssm_rel_wilt_ref_lag1`.
+     - `context_process` (8 variables) : `sm_layer2_lag1`, `sm_layer3_lag1`, `sm_layer4_lag1`, `rzsm_lag1`, `et_lag1`, `surface_runoff_lag1`, `baseflow_lag1`, `lai_lag1`.
+  3. **Architecture et hyperparamètres LightGBM** :
+     - Algorithme : `LGBMRegressor`
+     - Paramètres : `objective='regression'`, `metric='rmse'`, `boosting_type='gbdt'`, `n_estimators=300`, `learning_rate=0.05`, `num_leaves=63`, `max_depth=-1`, `subsample=0.8`, `colsample_bytree=0.8`, `random_state=42`.
+     - Traitement des données manquantes : branchement natif par LightGBM des NaN sur `roughness_coefficient` (sans imputation par zéro), couplé à l'indicateur binaire `roughness_is_nan`.
+     - Attribution explicable : TreeSHAP exact natif (`pred_contrib=True`), déviation d'additivité vérifiée $\le 10^{-15}$.
+  4. **Protocole d'échantillonnage d'entraînement (2016–2018)** :
+     - Échantillon stratifié spatialement d'au plus 100 observations par pixel, strictement sans remise (`replace=False`, sans doublons), extrait des observations passant les filtres QC LIS hors flétrissement.
+     - Suivi systématique de la distribution d'échantillonnage (minimum, médiane, et décompte des pixels à moins de 100 observations).
+  5. **Protocole d'évaluation et métriques standardisées** :
+     - Recalcul de la règle de flétrissement sur l'observation corrigée : $\mathrm{SMAP}^* \ge \theta_{\mathrm{wlt}} + 0{,}02$.
+     - Évaluation sur l'échantillon assimilable spécifique et sur l'échantillon commun aux références (B0, B1, B2, B2-train).
+     - Métriques obligatoires : Biais ($d_{\mathrm{res}} = \mathrm{SMAP}^* - \mathrm{SSM}_{\mathrm{OL}}$), RMSE, ubRMSE, corrélation avec l'open loop ($r_{\mathrm{SMAP}^* \mathrm{vs} \mathrm{OL}}$), corrélation d'anomalies temporelles avec SMAP brut ($r_{\mathrm{anom}}$), part d'observations assimilables et part de rejets au flétrissement.
+     - Contraste dynamique GMIA (Clay Loam JJA, $>30\,\%$ vs $0\,\%$) avec intervalle de confiance à 95 % par bootstrap sur blocs spatiaux de 1° ($B=500$) et décompte des blocs distincts.
+     - Stratification saisonnière intégrale (DJF, MAM, JJA, SON, Annuel).
+- **Statut** : Proposée (en attente d'accord utilisateur avant déverrouillage de 2020).

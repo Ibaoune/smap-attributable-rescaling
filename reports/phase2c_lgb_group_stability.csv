@@ -1,5 +1,5 @@
-group,mean_importance,mean_rank,fold_0_rank,fold_1_rank,fold_2_rank,fold_3_rank,fold_4_rank,mean_intra_spearman_rho
-removable,0.019029155371540023,2.0,2,2,2,2,2,0.9722479185938944
-retained,0.00544970598089541,4.0,4,4,4,4,4,1.0
-context_representation,0.0378436012876596,1.0,1,1,1,1,1,0.8799999999999999
-context_process,0.007468548894775234,3.0,3,3,3,3,3,0.8452380952380952
+group,mean_importance,fold_0_rank,fold_1_rank,fold_2_rank,fold_3_rank,fold_4_rank,mean_rank,mean_intra_spearman_rho
+context_representation,0.043051092936295735,1,1,1,1,1,1.0,0.8799999999999999
+removable,0.03961032915055247,2,2,2,2,2,2.0,0.9708619432632171
+context_process,0.014762718874981701,3,3,3,3,3,3.0,0.8476190476190476
+retained,0.007169672705820508,4,4,4,4,4,4.0,0.9785714285714286
