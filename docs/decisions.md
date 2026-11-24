@@ -193,3 +193,41 @@ Ce document consigne les décisions méthodologiques formelles actées pour le p
      - 2020 est ouvert une seule fois ; aucune modification de code, de groupes ou de seuils après ouverture ; un résultat défavorable est rapporté tel quel.
 - **Statut** : Actée.
 - **Erratum de libellé (Phase 3)** : Le libellé « Verdict global avant ouverture » figurant dans le rapport de Phase 3 (`reports/phase3_test2020_report.md`, section 1) doit se lire « Verdict de la Décision 15 ». Le rapport reste strictement inchangé.
+---
+
+## Décision 16 : Protocole d'évaluation du pilote DA-V2 sur l'année 2019 et critères d'extension
+- **Contexte** : Avant la fin de l'exécution des trois chaînes pilotes de l'année 2019 (`DA_nocdf_2019`, `DA_cdftrain_2019`, `DA_v2_2019`) et avant que leurs résultats ne soient disponibles, le protocole d'évaluation de la méthode candidate V2 et les critères formels gouvernant l'éventuelle extension à la période continue quinquennale 2016–2020 doivent être pré-enregistrés de manière transparente et figée.
+- **Statut** : **Proposée** (enregistrée avant l'existence des sorties 2019).
+- **Périodes d'évaluation** :
+  1. Année 2019 complète (du 2019-01-01 au 2020-01-01) ;
+  2. Sous-période février–décembre 2019 seule (afin d'isoler l'évaluation d'éventuels régimes transitoires d'initialisation en janvier consécutifs au spin-up d'ensemble coldstart).
+- **Critères formels de décision** :
+  - **Critère C1 (Incrément superficiel moyen)** :  
+    $$|\overline{\Delta\theta_1}|_{\text{DA-V2}} < |\overline{\Delta\theta_1}|_{\text{DA-NoCDF}}$$  
+    La valeur absolue de l'incrément moyen d'assimilation de la couche 1 ($0\text{--}10\text{ cm}$) moyennée spatialement sur le domaine doit être strictement inférieure sous DA-V2 à celle de DA-NoCDF (réduction du biais structurel d'innovation).
+  - **Critère C2 (Bilan volumique d'eau ajoutée par l'assimilation)** :  
+    $$|W_{\text{assim}}|_{\text{DA-V2}} < |W_{\text{assim}}|_{\text{DA-NoCDF}}$$  
+    La valeur absolue de l'eau cumulée ajoutée par l'assimilation sur l'année 2019 (en mm, moyenne domaine, calculée par la somme temporelle et verticale des incréments pondérés par les épaisseurs des couches de sol : $\sum_t \sum_{l=1}^4 \Delta\theta_l(t) \cdot \Delta z_l$, avec $\Delta z = [0{,}1; 0{,}3; 0{,}6; 1{,}0]\text{ m}$) doit être strictement inférieure sous DA-V2 à celle de DA-NoCDF (suppression de l'injection massive et déséquilibrante d'eau dans le bilan hydrique).
+  - **Critère C3 (Performance hydrologique aux exutoires)** :  
+    $$\text{KGE}(\text{DA-V2}) \ge \text{KGE}(\text{DA-CDF-train}) - 0{,}05$$  
+    Le critère de Kling-Gupta Efficiency (KGE) des débits routés par HyMAP aux stations hydrométriques du Sebou et du Bouregreg sous DA-V2 ne doit pas se dégrader de plus de $0{,}05$ par rapport à la référence DA-CDF-train.
+- **Règle de décision pour la qualification du pilote** :
+  - Le pilote 2019 est qualifié de **« prometteur »** si et seulement si **les trois critères C1, C2 et C3 sont simultanément satisfaits**.
+  - Si le pilote est qualifié de prometteur, **l'extension de l'assimilation DA-V2 à l'ensemble de la période quinquennale 2016–2020 est alors déclenchée**.
+  - Si l'un des critères n'est pas rempli, le pilote n'est pas qualifié de prometteur et l'extension à 2016–2020 n'est pas lancée.
+- **Diagnostics de caractérisation rapportés (sans valeur de critère de rejet)** :
+  1. Moyenne, écart-type et écart-type normalisé des innovations ($y - H(x)$) ;
+  2. Autocorrélation temporelle à un jour des innovations (lag-1 autocorrelation) ;
+  3. Nombre et fraction d'observations effectivement assimilées sur le domaine ;
+  4. Dynamique de l'humidité du sol racinaire (couches 2 et 3) et de l'évapotranspiration (ET), comparées aux données identifiées dans l'inventaire (`docs/phase4_eval_inventory.md`) ;
+  5. Découpage saisonnier systématique (DJF, MAM, JJA, SON) de l'ensemble de ces diagnostics.
+- **Analyse de faisabilité de C3 avec les données existantes sur le cluster et options de remplacement** :
+  - *Constat d'inventaire (voir `docs/phase4_eval_inventory.md`)* :
+    - Sur le **Bouregreg**, 3 stations indépendantes disposent de débits observés au pas **journalier** complets à 100 % sur 2019 (365 jours pour `b_l_chafia`, `b_s_jabeur` et le doublet `b_a_loudah`/`b_s_cherif`).
+    - Sur le **Sebou**, **aucune observation journalière n'existe sur le cluster** ; les relevés sont exclusivement **mensuels**. En 2019, seules 4 stations disposent de 12 mois complets (`ain_timedrine`, `azzaba`, `dar_el_hamra`, `pont_ait_aissa`), 2 stations sont tronquées à 8 mois (`ait_khabbach`, `pont_de_mdez` s'arrêtant en août 2019), et 1 station est arrêtée depuis 2017 (`el_mers`). Calculer un KGE sur $N=12$ (ou 11) points mensuels présente une fragilité statistique aiguë.
+    - Le routage HyMAP2 est **offline** : il exige une chaîne post-traitement dédiée après la simulation de surface (remapping des ruissellements $Q_s$ et $Q_{sb}$, exécution du binaire LIS HyMAP2). De plus, DA-V2 n'ayant pas de simulation sur 2016–2018, HyMAP ne peut pas bénéficier d'un spin-up hydrodynamique spécifique en 2 cycles sur 2016 et doit être initialisé par un restart donneur de P1 au 2018-12-31 ou en coldstart.
+  - *Options de remplacement proposées (soumises à arbitrage, sans choix préalable)* :
+    - **Option de remplacement 1 (C3 restreint au Bouregreg journalier)** : Restreindre le calcul de KGE du critère C3 strictement aux 3 stations journalières du Bouregreg (`b_l_chafia`, `b_s_jabeur`, `b_a_loudah` / `b_s_cherif`, $N=365$ jours), en excluant le Sebou de la métrique éliminatoire en raison de la nature mensuelle et du faible échantillon des données existantes.
+    - **Option de remplacement 2 (Préservation du volume de ruissellement et fermeture du bilan sans HyMAP)** : Évaluer directement les flux bruts de ruissellement et drainage générés par Noah-MP ($Q_{\text{tot}} = Q_s + Q_{sb}$), en vérifiant la cohérence volumique annuelle (PBIAS) par rapport aux apports jaugés cumulés sur les bassins amont et l'absence de surinjection aberrante : $|Q_{\text{tot}}(\text{DA-V2}) - Q_{\text{tot}}(\text{OPL})| < |Q_{\text{tot}}(\text{DA-NoCDF}) - Q_{\text{tot}}(\text{OPL})|$.
+    - **Option de remplacement 3 (Cohérence d'évapotranspiration avec la référence satellitaire GLEAM v4.3a)** : Remplacer C3 par un critère de non-dégradation de l'évapotranspiration par rapport à la grille validée GLEAM v4.3a (4 110 mailles de référence) : $r(\text{ET}_{\text{DA-V2}}, \text{ET}_{\text{GLEAM}}) \ge r(\text{ET}_{\text{DA-CDF-train}}, \text{ET}_{\text{GLEAM}}) - 0{,}02$.
+    - **Option de remplacement 4 (Cohérence de l'humidité du sol racinaire avec l'indice satellitaire ASCAT SWI)** : Remplacer C3 par un critère de corrélation temporelle de l'humidité racinaire simulée (couches 2–3 de Noah-MP) vis-à-vis du Soil Water Index d'ASCAT ($T=20$ ou $T=40\text{ jours}$) sur les mailles naturelles non irriguées : $r(\text{RZSM}_{\text{DA-V2}}, \text{SWI}_{\text{ASCAT}}) \ge r(\text{RZSM}_{\text{DA-CDF-train}}, \text{SWI}_{\text{ASCAT}}) - 0{,}02$.
