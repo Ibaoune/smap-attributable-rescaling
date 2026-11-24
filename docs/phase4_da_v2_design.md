@@ -339,3 +339,36 @@ Dans le code source de LIS (version LISF 7.5) :
   gtmp(c,r) = max_v - min_v
   ```
 - Pour chaque maille du domaine et chaque jour, la valeur archivée sous `ensspread_Soil Moisture Layer 1_01` correspond donc exactement à $\max(\text{smc}_1) - \min(\text{smc}_1)$ entre les 20 membres d'ensemble sur l'humidité volumique du sol de la couche 1 ($\text{m}^3/\text{m}^3$).
+
+### 7.5. Incident de Concurrence `SMAP_filelist.dat` et Règle d'Isolation Stricte
+
+#### 1. Mécanisme de l'incident
+Lors de la lecture des observations SMAP, LIS délègue la recherche des fichiers HDF5 journaliers à une routine C POSIX (`create_filelist.c`) appelée depuis `read_NASASMAPsm.F90` :
+```fortran
+rc = create_filelist(trim(list_files)//char(0), "SMAP_filelist.dat"//char(0))
+open (ftn, file="./SMAP_filelist.dat", action='read', status='old', iostat=ierr)
+```
+Le nom du fichier temporaire `"./SMAP_filelist.dat"` est écrit en dur relativement au répertoire d'exécution courant (`CWD`). Lorsque les trois expériences (`DA_nocdf_2019`, `DA_cdftrain_2019`, `DA_v2_2019`) s'exécutaient simultanément dans le répertoire racine `NoahMP_Morocco`, les processus concurrents écrasaient mutuellement ce fichier partagé à chaque cycle journalier (00:00).
+
+La vérification exhaustive menée sur les fichiers `DAOBS` (Enregistrement 1, observations brutes non remises à l'échelle reprojectées à 5 km) et consignée dans `reports/check_obs_source_2019.csv` a révélé :
+- `DA_nocdf_2019` : 8 cycles contaminés en janvier (lecture intempestive des fichiers V2 de `DA_v2`).
+- `DA_cdftrain_2019` : 0 cycle contaminé en janvier, mais crash au 4 février suite à une troncature de chemin relative lors de l'accès concurrent.
+- `DA_v2_2019` : **62 cycles contaminés** en janvier (lecture intempestive des fichiers SMAP bruts de `DA_nocdf`/`DA_cdftrain`).
+
+#### 2. Règle de décision et remédiation appliquée
+Conformément à la règle méthodologique fixée à l'avance :
+1. **Annulation immédiate** : Les trois chaînes et le job d'orchestration ont été immédiatement annulés (`scancel`).
+2. **Archivage** : L'ensemble des sorties corrompues (logs, outputs, restarts, configs générées) a été déplacé dans `experiments/da_v2/archive_filelist_bug/`.
+3. **Isolation stricte des répertoires de travail** : Le générateur de scripts de soumission `chain_da.py` a été adapté afin que chaque expérience dispose de son propre répertoire d'exécution dédié :
+   ```bash
+   RUN_DIR="{base_dir}/run"
+   mkdir -p "$RUN_DIR"
+   for d in data src arch shared domain; do
+       if [ -d "/home/.../NoahMP_Morocco/$d" ]; then
+           ln -sfn "/home/.../NoahMP_Morocco/$d" "$RUN_DIR/$d"
+       fi
+   done
+   cd "$RUN_DIR"
+   ```
+   Chaque expérience écrit et lit ainsi son propre fichier `./SMAP_filelist.dat` de façon strictement étanche.
+4. **Relance propre au 2019-01-01** : Les trois chaînes ont été redémarrées simultanément au 2019-01-01 depuis le restart d'ensemble sain `ENS_OL_2018Q4` (`LIS_RST_NOAHMP401_201901010000.d01.nc`), perturbations en mode coldstart (`Perturbations restart filename: "none"`), sur la partition `compute` et le compte `empowermed-ahl6xm8o7mg-DEFAULT-CPU`.

@@ -169,7 +169,14 @@ def main():
 #SBATCH --ntasks=32
 
 set -e
-cd /home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco
+RUN_DIR="{base_dir}/run"
+mkdir -p "$RUN_DIR"
+for d in data src arch shared domain; do
+    if [ -d "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/$d" ]; then
+        ln -sfn "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/$d" "$RUN_DIR/$d"
+    fi
+done
+cd "$RUN_DIR"
 
 source arch/arch_toubkal.env
 

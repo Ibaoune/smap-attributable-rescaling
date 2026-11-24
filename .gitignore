@@ -48,3 +48,5 @@ experiments/da_v2/*/output/
 experiments/da_v2/*/restarts/
 experiments/da_v2/restarts/
 experiments/da_v2/*/logs/
+experiments/da_v2/*/run/
+experiments/da_v2/archive_filelist_bug/
