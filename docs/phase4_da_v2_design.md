@@ -232,3 +232,92 @@ Conformément à la demande d'investigation en lecture seule, l'ensemble des lec
 | `CDF_Transfer_NASA_SMAPsm` | HDF5 (`.h5`) | EASE-Grid 2.0 9 km | **Oui** (L2815) | **NON** (impose CDF transfer dynamique) |
 
 **Conclusion** : Sous la contrainte absolue « sans modifier le code LIS », l'utilisation du lecteur natif **`NASA_SMAPsm`** (format HDF5 EASE-Grid 2.0 9 km) est l'unique solution fonctionnelle pour la configuration Noah-MP 4.0.1 de Phase 1. La préservation de l'intégrité de l'attribution V2 est garantie en masquant systématiquement à `-9999.0f` toute maille EASE du domaine NorthMor n'ayant pas reçu de prédiction V2, éliminant tout risque d'assimilation résiduelle de données SMAP brutes.
+
+
+---
+
+## 7. Initialisation des Runs DA en Phase 1 (P1) et Transposition aux Expériences 2019
+
+### 7.1. Historique d'Initialisation en Phase 1 (P1)
+En Phase 1 (matrice `matrix_2016_2020`), l'initialisation des runs DA s'est appuyée sur une chaîne hiérarchique en trois étapes :
+1. **Spin-up Déterministe (`SPINUP_OPL`, 2005–2015)** :
+   - Simulation déterministe mono-membre (`Number of ensembles per tile: 1`).
+   - Le restart final au 2015-01-01 (`LIS_RST_NOAHMP401_201501010000.d01.nc`, 1,6 Mo) contient $N_{\text{tiles}} = 16\,030$ tiles.
+2. **Expansion du Restart Mono-Membre vers Ensemble (20 membres)** :
+   - **Absence d'option native dans LIS ou LDT** : Ni LIS ni LDT ne possèdent d'option intégrée (dans `lis.config` ou `ldt.config`) pour démultiplier un état restart Noah-MP NetCDF mono-membre vers $N$ membres.
+   - **Script d'expansion Python** : L'auteur du projet a développé un script ad hoc (`NoahMP_Morocco/experiments/NorthMor/SPINUP/ENS_OPL_2015/scripts/expand_restart.py`), répliquant exactement 20 fois chaque variable le long de la dimension `ntiles` ($16\,030 \times 20 = 320\,600$ tiles) via `np.repeat(data, 20, axis=axis)`, produisant le fichier NetCDF 20 membres `LIS_RST_NOAHMP401_201501010000_ens20.d01.nc` (90 Mo).
+3. **Génération de la Dispersion d'Ensemble (`ENS_OPL_2015`, janv–mars 2015)** :
+   - Simulation LIS de 3 mois sans assimilation (`Number of data assimilation instances: 0`), 20 membres (`Number of ensembles per tile: 20`), initialisée avec `Start mode: restart` et `Perturbations start mode: "coldstart"`.
+   - Les perturbations stochastiques GMAO sur le forçage atmosphérique et l'état de surface brisent la symétrie dès le premier pas de temps, amenant la dispersion d'ensemble à un niveau physique stable ($\\sigma \\approx 0{,}051\\,\\mathrm{m}^3/\\mathrm{m}^3$ au 2015-03-31).
+4. **Spin-up d'Assimilation SMAP (`SPINUP_DA`, avr–déc 2015)** :
+   - Initialisé au 2015-04-01 avec l'état de surface issu de `ENS_OPL_2015` au 2015-03-31 23:45 (`Start mode: restart`, fichier `restarts/surf/LIS_RST_NOAHMP401_201504010000.d01.nc`, 21 Mo).
+   - Mode perturbations en `coldstart` pour le premier mois (`Perturbations start mode: "coldstart"`, `Perturbations restart filename: "none"`) suite à l'incompatibilité du fichier DAPERT issu d'ENS_OPL (Job 7260790 écourté par crash EOF car absence d'enregistrements d'observation dans DAPERT), puis en mode `restart` pour mai–décembre 2015.
+5. **Démarrage de la Matrice 2016–2020 P1** :
+   - Au 2016-01-01, les runs DA (`DA_nocdf_noirr_2016_2020` et `DA_cdf_noirr_2016_2020`) ont démarré directement depuis les états préconditionnés par 9 mois de DA SMAP issus de `SPINUP_DA` :
+     - `Noah-MP.4.0.1 restart file: .../SPINUP_DA/restarts/surf/LIS_RST_NOAHMP401_201601010000.d01.nc` (L105)
+     - `Perturbations restart filename: .../SPINUP_DA/restarts/pert/LIS_DAPERT_201601010000.d01.bin` (L173)
+     - `Start mode: restart` (L27) et `Perturbations start mode: "restart"` (L171).
+
+### 7.2. Paramétrage DA, Perturbations et Erreur d'Observation dans P1 (Citations de Config)
+Dans les fichiers de configuration de production P1 (ex. `lis_DA_SMAP_nocdf_noirr_2019-01.config`) :
+- **Taille d'ensemble** :
+  ```
+  L43:  Number of ensembles per tile:           20
+  ```
+- **Algorithme d'assimilation et variables d'état** :
+  ```
+  L67:  Number of data assimilation instances:                1
+  L68:  Data assimilation algorithm:                          "EnKF"
+  L72:  Data assimilation set:                                "SMAP(NASA) soil moisture"
+  L75:  Data assimilation number of observation types:        1
+  L76:  Data assimilation output ensemble spread:             1
+  L80:  Number of state variables:                            4
+  ```
+- **Routage** :
+  ```
+  L66:  Routing model:                          "none"
+  ```
+  *(Le routage HyMAP n'est pas activé dans P1).*
+- **Perturbations stochastiques (Schéma GMAO)** :
+  ```
+  L167: Forcing perturbation algorithm:           "GMAO scheme"
+  L168: State perturbation algorithm:             "GMAO scheme"
+  L169: Observation perturbation algorithm:       "GMAO scheme"
+  L175: Forcing perturbation frequency:           "1hr"
+  L177: Forcing perturbation attributes file:     "./data/pert_package/forcing_pertattribs.txt"
+  L179: State perturbation frequency:              "3hr"
+  L181: State perturbation attributes file:       "./data/pert_package/noahmp_sm_pertattribs.txt"
+  L183: Observation perturbation frequency:         "6hr"
+  L185: Observation perturbation attributes file:    "./data/pert_package/smap_pertattribs.txt"
+  ```
+- **Erreur d'observation SMAP** :
+  Définie dans `./data/pert_package/smap_pertattribs.txt` :
+  ```
+  #perttype std  std_max  zeromean  tcorr  xcorr ycorr ccorr
+  SMAP(NASA) soil moisture
+    0   0.04     2.5      1  43200   0    0    1.0
+  ```
+  Bruit additif gaussien (`perttype: 0`), écart-type d'erreur $\sigma_o = 0{,}04\,\mathrm{m}^3/\mathrm{m}^3$ (`std: 0.04`), seuil de troncature à $2{,}5\,\sigma$ (`std_max: 2.5`), moyenne nulle garantie (`zeromean: 1`), temps de décorrélation temporelle $43\,200\,\text{s} = 12\,\text{h}$ (`tcorr: 43200`). L'écart-type d'erreur d'observation utilisé dans la mise à jour EnKF par LIS est exactement $0{,}04\,\mathrm{m}^3/\mathrm{m}^3$.
+
+### 7.3. Protocole d'Initialisation pour les Expériences DA 2019
+Pour garantir une comparaison strictement équitable et éliminer tout artefact transitoire au 2019-01-01, les trois expériences d'assimilation 2019 (`DA_nocdf_2019`, `DA_cdftrain_2019` et `DA_v2_2019`) suivront le protocole historique éprouvé lors de la Phase 1 (`ENS_OPL_2015` suivi de `SPINUP_DA` en avril 2015) :
+
+1. **Spin-up d'ensemble Open-Loop préalable (`ENS_OL_2018Q4`)** :
+   - Un run d'ensemble sans assimilation (`Number of data assimilation instances: 0`) est préparé sur les 3 mois précédant l'assimilation, du 2018-10-01 au 2019-01-01.
+   - Il démarre du restart OL mono-membre au 2018-10-01 issu de P1 (`OPL_noirr_2016_2020/restarts/LIS_RST_NOAHMP401_201810010000.d01.nc`, 16 030 tiles), répliqué à 20 membres ($320\,600$ tiles) via `expand_restart.py` (`LIS_RST_NOAHMP401_201810010000_ens20.d01.nc`).
+   - Les perturbations GMAO (forçage 1h, état 3h, observation 6h) sont activées en mode coldstart (`Perturbations start mode: "coldstart"`, `Perturbations restart filename: "none"`), selon la recette exacte d'`ENS_OPL_2015`.
+   - Ce préconditionnement de 3 mois permet à l'ensemble d'acquérir un étalement dynamique et une structure de covariances d'erreur d'ébauche physiquement cohérents avant le début de l'assimilation.
+
+2. **Démarrage des trois runs DA 2019 au 2019-01-01** :
+   - Les trois runs 2019 démarreront du restart de surface 20 membres généré au 2019-01-01 par `ENS_OL_2018Q4` (`LIS_RST_NOAHMP401_201901010000.d01.nc`) :
+     ```
+     Start mode:                             restart
+     Noah-MP.4.0.1 restart file:             experiments/da_v2/ENS_OL_2018Q4/output/2018Q4/SURFACEMODEL/201901/LIS_RST_NOAHMP401_201901010000.d01.nc
+     ```
+   - **Perturbations en coldstart** : Tout comme pour `SPINUP_DA` en avril 2015, les perturbations d'assimilation démarreront en mode coldstart :
+     ```
+     Perturbations start mode:               "coldstart"
+     Perturbations restart filename:         "none"
+     ```
+     Ce choix évite tout problème de compatibilité de structure d'enregistrement dans les fichiers binaires `LIS_DAPERT` (qui diffèrent entre un run sans instances DA et un run avec 1 instance DA SMAP) tout en assurant que la dispersion d'ensemble des états de surface est déjà mature dès $t=0$.
+   - Les trois configurations (`DA_nocdf_2019`, `DA_cdftrain_2019` et `DA_v2_2019`) partagent exactement le même état initial, garantissant que tout écart de performance provient exclusivement de la correction d'observation appliquée.

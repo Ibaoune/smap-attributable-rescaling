@@ -42,3 +42,9 @@ experiments/**/SMAP_filelist.dat
 
 experiments/**/*.h5
 experiments/**/obs/
+
+# Phase 4 DA v2 outputs and restarts
+experiments/da_v2/*/output/
+experiments/da_v2/*/restarts/
+experiments/da_v2/restarts/
+experiments/da_v2/*/logs/
