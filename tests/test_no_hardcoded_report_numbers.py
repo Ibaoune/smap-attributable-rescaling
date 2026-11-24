@@ -254,3 +254,52 @@ def test_script11_no_fit_call():
         code = f.read()
 
     assert ".fit(" not in code, "Found forbidden '.fit(' call in scripts/11_test_2020_sealed.py!"
+
+
+def test_no_hardcoded_numbers_in_decision16_report_generator():
+    """Verify that generate_markdown_report in scripts/12_evaluate_decision16.py
+    does not contain hardcoded decimal literals or result numbers in static text,
+    and dynamically renders metric values from dataframes.
+    """
+    import importlib.util
+    script_path = os.path.join(ROOT_DIR, "scripts", "12_evaluate_decision16.py")
+    assert os.path.exists(script_path), "scripts/12_evaluate_decision16.py introuvable!"
+    with open(script_path, "r", encoding="utf-8") as f:
+        full_code = f.read()
+
+    start = full_code.find("def generate_markdown_report(")
+    end = full_code.find("def main():", start)
+    src = full_code[start:end]
+
+    # 1. Aucun décimal en dur dans le texte statique du générateur hors accolades
+    text_outside_braces = re.sub(r'\{[^}]+\}', '', src)
+    hardcoded_decimals = re.findall(r'\b\d+\.\d+\b', text_outside_braces)
+    assert len(hardcoded_decimals) == 0, f"Found hardcoded decimal numbers in Decision 16 report generator: {hardcoded_decimals}"
+
+    # 2. Utilisation obligatoire de la génération dynamique par table
+    assert "df_to_markdown(" in src, "Le rapport doit formater dynamiquement ses tables via to_markdown!"
+
+    # 3. Test fonctionnel d'injection dynamique : deux jeux de données distincts
+    spec = importlib.util.spec_from_file_location("eval_d16", script_path)
+    eval_d16 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(eval_d16)
+
+    import pandas as pd
+    df_crit_1 = pd.DataFrame([{
+        "Critere": "C1", "Description": "Test", "Periode": "Annuel_2019",
+        "DA_nocdf": 0.1234, "DA_cdftrain": 0.2345, "DA_v2": 0.0567,
+        "Condition": "DA-V2 < DA-NoCDF", "Statut": "Validé"
+    }])
+    df_crit_2 = pd.DataFrame([{
+        "Critere": "C1", "Description": "Test", "Periode": "Annuel_2019",
+        "DA_nocdf": 0.9876, "DA_cdftrain": 0.8765, "DA_v2": 0.7654,
+        "Condition": "DA-V2 < DA-NoCDF", "Statut": "Non validé"
+    }])
+    empty_df = pd.DataFrame()
+
+    rep_1 = eval_d16.generate_markdown_report(df_crit_1, empty_df, empty_df, empty_df, empty_df, "Verdict A")
+    rep_2 = eval_d16.generate_markdown_report(df_crit_2, empty_df, empty_df, empty_df, empty_df, "Verdict B")
+
+    assert "0.1234" in rep_1 and "0.1234" not in rep_2
+    assert "0.9876" in rep_2 and "0.9876" not in rep_1
+    assert "Verdict A" in rep_1 and "Verdict B" in rep_2
