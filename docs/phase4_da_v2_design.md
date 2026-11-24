@@ -321,3 +321,21 @@ Pour garantir une comparaison strictement équitable et éliminer tout artefact 
      ```
      Ce choix évite tout problème de compatibilité de structure d'enregistrement dans les fichiers binaires `LIS_DAPERT` (qui diffèrent entre un run sans instances DA et un run avec 1 instance DA SMAP) tout en assurant que la dispersion d'ensemble des états de surface est déjà mature dès $t=0$.
    - Les trois configurations (`DA_nocdf_2019`, `DA_cdftrain_2019` et `DA_v2_2019`) partagent exactement le même état initial, garantissant que tout écart de performance provient exclusivement de la correction d'observation appliquée.
+
+### 7.4. Définition Technique de la Métrique de Dispersion `ensspread` dans LIS
+
+Dans le code source de LIS (version LISF 7.5) :
+- Bien que la routine `writeEnsembleSpread` ([enkf_Mod.F90#L868](file:///home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/src/lisf/lis/dataassim/algorithm/enkf/enkf_Mod.F90#L868)) indique dans son en-tête `! This routine writes the ensemble spread (standard deviation) of the model state vector.`, le calcul effectif délégué à la sous-routine `LIS_writevar_spread` ([LIS_historyMod.F90#L7973-L7980](file:///home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/NoahMP_Morocco/src/lisf/lis/core/LIS_historyMod.F90#L7973-L7980)) ne calcule ni la variance ni l'écart-type.
+- En effet, le calcul de la variance et de l'écart-type (`std_v = sqrt(var_v/npatch - mean_v*mean_v)`) a été mis sous directive conditionnelle inactive `#if 0` (lignes 7949–7970).
+- Le bloc actif (lignes 7973–7980) calcule strictement l'**étendue d'ensemble (range)** :
+  ```fortran
+  min_v = 1000000
+  max_v = -1000000 
+  do t=1,npatch
+     if(gtmp1(count1).lt.min_v) min_v = gtmp1(count1)
+     if(gtmp1(count1).gt.max_v) max_v = gtmp1(count1)
+     count1 = count1 + 1
+  enddo                      
+  gtmp(c,r) = max_v - min_v
+  ```
+- Pour chaque maille du domaine et chaque jour, la valeur archivée sous `ensspread_Soil Moisture Layer 1_01` correspond donc exactement à $\max(\text{smc}_1) - \min(\text{smc}_1)$ entre les 20 membres d'ensemble sur l'humidité volumique du sol de la couche 1 ($\text{m}^3/\text{m}^3$).

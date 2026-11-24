@@ -62,9 +62,9 @@ def main():
                 
         rows.append({
             'date': dstr,
-            'spread_l1_mean_P1': p1_val,
-            'spread_l1_mean_DA_v2_2019': v2_val,
-            'spread_l1_mean_ENS_OPL_2015_last': spinup_spread_val
+            'range_l1_mean_P1': p1_val,
+            'range_l1_mean_DA_v2_2019': v2_val,
+            'range_l1_mean_SPINUP_DA_last': spinup_spread_val
         })
         curr += timedelta(days=1)
 

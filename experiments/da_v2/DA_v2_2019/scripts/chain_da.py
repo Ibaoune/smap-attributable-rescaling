@@ -101,15 +101,21 @@ def main():
     pert_restart_path = os.path.join(restarts_dir_pert, expected_start_pert_restart)
     
     if current_date == global_start_date:
-        surf_restart_full = "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/smap-attributable-rescaling/experiments/da_v2/restarts/LIS_RST_NOAHMP401_201901010000_ens20.d01.nc"
+        cand1 = "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/smap-attributable-rescaling/experiments/da_v2/ENS_OL_2018Q4/output/2018Q4/SURFACEMODEL/201901/LIS_RST_NOAHMP401_201901010000.d01.nc"
+        cand2 = "/home/mohammad.elaabaribao/lustre/empowermed-ahl6xm8o7mg/users/mohammad.elaabaribao/smap-attributable-rescaling/experiments/da_v2/ENS_OL_2018Q4/output/2018Q4/SURFACEMODEL/201812/LIS_RST_NOAHMP401_201812312345.d01.nc"
+        default_initial_surf = cand1 if os.path.exists(cand1) else (cand2 if os.path.exists(cand2) else cand1)
+        surf_restart_full = cfg.get("InitialRestartFile", default_initial_surf)
         pert_restart_full = "none"
     else:
         surf_restart_full = f"{base_dir}/{surf_restart_path}"
         pert_restart_full = f"{base_dir}/{pert_restart_path}"
 
     if not os.path.exists(surf_restart_full):
-        print(f"Error: Required surface restart file {surf_restart_full} not found!")
-        sys.exit(1)
+        if args.submit:
+            print(f"Error: Required surface restart file {surf_restart_full} not found!")
+            sys.exit(1)
+        else:
+            print(f"Warning: Required surface restart file {surf_restart_full} not yet present (spin-up in progress).")
         
     if pert_start_mode == "restart" and not os.path.exists(pert_restart_full):
         print(f"Error: Required perturbation restart file {pert_restart_full} not found!")
@@ -158,6 +164,7 @@ def main():
 #SBATCH --error={log_dir_path}/{exp_name}_{label}_%j.err
 #SBATCH --time=12:00:00
 #SBATCH --account=empowermed-ahl6xm8o7mg-DEFAULT-CPU
+#SBATCH --partition=compute
 #SBATCH --nodes=1
 #SBATCH --ntasks=32
 
